@@ -455,7 +455,6 @@ impl MenuBar {
                 look.taskbar_backdrop.color,
                 look.light,
                 look.glass,
-                scale,
             )?
         {
             layers.InsertAtTop(&backdrop)?;

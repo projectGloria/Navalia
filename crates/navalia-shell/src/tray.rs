@@ -17,7 +17,7 @@ use std::{
     cell::RefCell,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
     thread::JoinHandle,
@@ -491,12 +491,76 @@ impl Drop for TrayHost {
     }
 }
 
+static HOST_HWND: AtomicIsize = AtomicIsize::new(0);
+static YIELD_DEPTH: AtomicUsize = AtomicUsize::new(0);
+static ZORDER_LOCK: Mutex<()> = Mutex::new(());
+
+/// Temporarily places the tray host behind Explorer's `Shell_TrayWnd` so
+/// `SHAppBarMessage` (which resolves `FindWindowW("Shell_TrayWnd", NULL)` and
+/// allocates shared memory for that window's PID) talks directly to Explorer.
+pub(crate) fn with_explorer_in_front<T>(f: impl FnOnce() -> T) -> T {
+    struct YieldGuard {
+        moved_host: Option<HWND>,
+    }
+
+    impl Drop for YieldGuard {
+        fn drop(&mut self) {
+            if let Some(host) = self.moved_host {
+                // SAFETY: Read-only validity check followed by z-order restore on our own window.
+                unsafe {
+                    if IsWindow(Some(host)).as_bool() {
+                        let _ = SetWindowPos(
+                            host,
+                            Some(HWND_TOPMOST),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                        );
+                    }
+                }
+            }
+            YIELD_DEPTH.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    let _lock = ZORDER_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    YIELD_DEPTH.fetch_add(1, Ordering::SeqCst);
+    let host_raw = HOST_HWND.load(Ordering::Acquire);
+    let moved_host = if host_raw != 0
+        && let Some(explorer) = crate::taskbar::explorer_tray()
+    {
+        let host = HWND(host_raw as *mut _);
+        // SAFETY: Places our hidden tray host directly behind Explorer's `Shell_TrayWnd`.
+        unsafe {
+            let _ = SetWindowPos(
+                host,
+                Some(explorer),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+        }
+        Some(host)
+    } else {
+        None
+    };
+    let _guard = YieldGuard { moved_host };
+    f()
+}
+
 fn run_host(shared: Arc<Shared>, ready: &mpsc::Sender<Option<isize>>) {
     HOST.with(|host| *host.borrow_mut() = Some(shared));
     let Some(window) = create_host_window() else {
         let _ = ready.send(None);
         return;
     };
+    HOST_HWND.store(window.0 as isize, Ordering::Release);
     let _ = ready.send(Some(window.0 as isize));
     keep_in_front(window);
     ask_for_icons();
@@ -508,6 +572,7 @@ fn run_host(shared: Arc<Shared>, ready: &mpsc::Sender<Option<isize>>) {
             DispatchMessageW(&msg);
         }
     }
+    let _ = HOST_HWND.compare_exchange(window.0 as isize, 0, Ordering::AcqRel, Ordering::Relaxed);
     HOST.with(|host| *host.borrow_mut() = None);
 }
 
@@ -560,6 +625,9 @@ fn explorer_rect() -> Option<RECT> {
 /// Stays the window apps find first, with Explorer's taskbar area (some
 /// apps place things by it) and its task band property (see `taskband`).
 fn keep_in_front(window: HWND) {
+    if YIELD_DEPTH.load(Ordering::Acquire) > 0 {
+        return;
+    }
     // SAFETY: Lookups and changes on the host's own hidden window.
     unsafe {
         if FindWindowW(TRAY_CLASS, None).ok() != Some(window) {
@@ -1010,6 +1078,25 @@ mod tests {
         assert_eq!(anchor & 0xFFFF, (-5i32) as u16 as usize);
         assert_eq!(anchor >> 16, 1050);
         assert_eq!(event, (WM_CONTEXTMENU | (7 << 16)) as isize);
+    }
+
+    #[test]
+    fn with_explorer_in_front_returns_value_and_resets_depth_on_panic() {
+        let value = with_explorer_in_front(|| {
+            assert!(YIELD_DEPTH.load(Ordering::Acquire) > 0);
+            42
+        });
+        assert_eq!(value, 42);
+        assert_eq!(YIELD_DEPTH.load(Ordering::Acquire), 0);
+
+        let panicked = std::panic::catch_unwind(|| {
+            with_explorer_in_front(|| -> () {
+                assert!(YIELD_DEPTH.load(Ordering::Acquire) > 0);
+                panic!("simulated failure");
+            });
+        });
+        assert!(panicked.is_err());
+        assert_eq!(YIELD_DEPTH.load(Ordering::Acquire), 0);
     }
 
     #[test]

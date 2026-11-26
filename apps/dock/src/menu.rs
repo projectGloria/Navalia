@@ -10,7 +10,7 @@
 use std::{
     sync::{
         OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -41,22 +41,23 @@ use windows::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             HiDpi::GetDpiForWindow,
             Input::KeyboardAndMouse::{
-                MAPVK_VK_TO_CHAR, MapVirtualKeyW, ReleaseCapture, SetCapture, VK_DOWN, VK_END,
-                VK_ESCAPE, VK_HOME, VK_RETURN, VK_SPACE, VK_UP,
+                GetAsyncKeyState, MAPVK_VK_TO_CHAR, MapVirtualKeyW, TME_LEAVE, TRACKMOUSEEVENT,
+                TrackMouseEvent, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_RETURN, VK_SPACE, VK_UP,
             },
             WindowsAndMessaging::{
-                AppendMenuW, CS_DROPSHADOW, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-                DestroyMenu, DestroyWindow, DispatchMessageW, GetForegroundWindow, GetMessageW,
-                IDC_ARROW, KillTimer, LoadCursorW, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-                MSG, PostMessageW, PostQuitMessage, RegisterClassW, SPI_GETHIGHCONTRAST,
-                SPI_GETSCREENREADER, SW_SHOWNA, SWP_NOACTIVATE,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetForegroundWindow, SetTimer,
-                SetWindowPos, ShowWindow, SystemParametersInfoW, TPM_BOTTOMALIGN, TPM_CENTERALIGN,
-                TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON,
-                TPM_TOPALIGN, TPM_VCENTERALIGN, TRACK_POPUP_MENU_FLAGS, TrackPopupMenuEx,
-                TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_CANCELMODE, WM_CAPTURECHANGED,
-                WM_CHAR, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE,
-                WM_NULL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER,
+                AppendMenuW, CS_DROPSHADOW, CallNextHookEx, CreatePopupMenu, CreateWindowExW,
+                DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW, GetForegroundWindow,
+                GetMessageW, HHOOK, HWND_TOPMOST, IDC_ARROW, KillTimer, LoadCursorW, MF_CHECKED,
+                MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSLLHOOKSTRUCT, PostMessageW,
+                PostQuitMessage, RegisterClassW, SPI_GETHIGHCONTRAST, SPI_GETSCREENREADER,
+                SW_SHOWNA, SWP_NOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor,
+                SetForegroundWindow, SetTimer, SetWindowPos, SetWindowsHookExW, ShowWindow,
+                SystemParametersInfoW, TPM_BOTTOMALIGN, TPM_CENTERALIGN, TPM_LEFTALIGN,
+                TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN,
+                TPM_VCENTERALIGN, TRACK_POPUP_MENU_FLAGS, TrackPopupMenuEx, TranslateMessage,
+                UnhookWindowsHookEx, WA_INACTIVE, WH_MOUSE_LL, WM_ACTIVATE, WM_CANCELMODE, WM_CHAR,
+                WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_NULL,
+                WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SYSKEYDOWN, WM_TIMER,
                 WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_POPUP,
             },
@@ -231,10 +232,56 @@ const ARM_DELAY: Duration = Duration::from_millis(300);
 /// Checks that the menu still has the focus, in case Windows gave it away
 /// without telling (it then could not see clicks elsewhere to close).
 const FOCUS_TIMER: usize = 1;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 const CHECK_MARK: char = '\u{E73E}';
 
-/// Set by the window procedure when the menu loses the focus or the mouse.
+/// Set by the window procedure or outside-click hook when the menu is dismissed.
 static DISMISSED: AtomicBool = AtomicBool::new(false);
+static MENU_HWND: AtomicIsize = AtomicIsize::new(0);
+static MENU_LEFT: AtomicI32 = AtomicI32::new(0);
+static MENU_TOP: AtomicI32 = AtomicI32::new(0);
+static MENU_RIGHT: AtomicI32 = AtomicI32::new(0);
+static MENU_BOTTOM: AtomicI32 = AtomicI32::new(0);
+
+/// Removes the low-level outside-click hook when the popup closes.
+struct OutsideClickHook(HHOOK);
+
+impl Drop for OutsideClickHook {
+    fn drop(&mut self) {
+        MENU_HWND.store(0, Ordering::Relaxed);
+        // SAFETY: `self.0` was installed by `SetWindowsHookExW` on this thread.
+        unsafe {
+            let _ = UnhookWindowsHookEx(self.0);
+        }
+    }
+}
+
+fn point_in_rect(left: i32, top: i32, right: i32, bottom: i32, pt: POINT) -> bool {
+    pt.x >= left && pt.x < right && pt.y >= top && pt.y < bottom
+}
+
+/// Decides whether `FOCUS_TIMER` should close the menu and whether it now owns
+/// foreground focus.
+///
+/// When `SetForegroundWindow` fails (common for `WS_EX_NOACTIVATE` dock clicks),
+/// `front` stays on `previous`; closing whenever `front != own` would dismiss the
+/// menu on the first timer tick. Instead, keep it open while `front == previous`
+/// and close only if the user activates a different window.
+fn focus_poll_decision(
+    has_foreground: bool,
+    front: isize,
+    own: isize,
+    previous: isize,
+    past_arm_delay: bool,
+) -> (bool, bool) {
+    if has_foreground {
+        (front != own && past_arm_delay, true)
+    } else if front == own {
+        (false, true)
+    } else {
+        (front != previous && past_arm_delay, false)
+    }
+}
 
 struct Row {
     /// `None` for a separator.
@@ -252,6 +299,7 @@ struct Popup {
     hwnd: HWND,
     owner: HWND,
     _target: DesktopWindowTarget,
+    _outside_hook: Option<OutsideClickHook>,
     rows: Vec<Row>,
     selection: ShapeVisual,
     width: f32,
@@ -260,6 +308,7 @@ struct Popup {
     hot: Option<usize>,
     opened: Instant,
     armed: bool,
+    has_foreground: bool,
     previous: HWND,
 }
 
@@ -516,23 +565,34 @@ impl Popup {
         };
         target.SetRoot(&root)?;
 
-        DISMISSED.store(false, Ordering::Relaxed);
         // SAFETY: Our own window; the previous foreground is restored on close.
-        let previous = unsafe {
+        // Do not call `SetCapture`: on Windows, capturing on a non-foreground
+        // window is revoked on the first mouse move, firing `WM_CAPTURECHANGED`
+        // and dismissing the menu before the user can click anything. Outside
+        // clicks are observed via `WH_MOUSE_LL` instead.
+        let (previous, has_foreground, outside_hook) = unsafe {
             let previous = GetForegroundWindow();
-            SetWindowPos(hwnd, None, left, top, w, h, SWP_NOACTIVATE)?;
+            SetWindowPos(hwnd, Some(HWND_TOPMOST), left, top, w, h, SWP_NOACTIVATE)?;
             let _ = ShowWindow(hwnd, SW_SHOWNA);
-            // In front with the focus, so keys reach it and clicks elsewhere
-            // close it, as the native menu does.
             let _ = SetForegroundWindow(hwnd);
-            SetCapture(hwnd);
+            DISMISSED.store(false, Ordering::Relaxed);
+            let has_foreground = GetForegroundWindow() == hwnd;
+            MENU_LEFT.store(left, Ordering::Relaxed);
+            MENU_TOP.store(top, Ordering::Relaxed);
+            MENU_RIGHT.store(left + w, Ordering::Relaxed);
+            MENU_BOTTOM.store(top + h, Ordering::Relaxed);
+            MENU_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
+            let outside_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(outside_click_proc), None, 0)
+                .ok()
+                .map(OutsideClickHook);
             SetTimer(Some(hwnd), FOCUS_TIMER, 250, None);
-            previous
+            (previous, has_foreground, outside_hook)
         };
         Ok(Self {
             hwnd,
             owner,
             _target: target,
+            _outside_hook: outside_hook,
             rows,
             selection,
             width,
@@ -541,6 +601,7 @@ impl Popup {
             hot: None,
             opened: Instant::now(),
             armed: false,
+            has_foreground,
             previous,
         })
     }
@@ -589,9 +650,20 @@ impl Popup {
         let own = msg.hwnd == self.hwnd;
         match msg.message {
             WM_TIMER if own && msg.wParam.0 == FOCUS_TIMER => {
-                // SAFETY: Read-only query.
+                // SAFETY: Read-only queries.
                 let front = unsafe { GetForegroundWindow() };
-                if front != self.hwnd && self.opened.elapsed() > ARM_DELAY {
+                let (close, next_has_foreground) = focus_poll_decision(
+                    self.has_foreground,
+                    front.0 as isize,
+                    self.hwnd.0 as isize,
+                    self.previous.0 as isize,
+                    self.opened.elapsed() > ARM_DELAY,
+                );
+                self.has_foreground = next_has_foreground;
+                if close {
+                    return Handled::Close(None);
+                }
+                if !self.has_foreground && unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) < 0 } {
                     return Handled::Close(None);
                 }
                 Handled::Yes
@@ -604,6 +676,20 @@ impl Popup {
                 if self.opened.elapsed() > ARM_DELAY {
                     self.armed = true;
                 }
+                let mut track = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: self.hwnd,
+                    dwHoverTime: 0,
+                };
+                // SAFETY: `track` is a valid structure for our live popup window.
+                unsafe {
+                    let _ = TrackMouseEvent(&mut track);
+                }
+                Handled::Yes
+            }
+            WM_MOUSELEAVE if own => {
+                self.set_hot(None);
                 Handled::Yes
             }
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN if own => {
@@ -742,14 +828,14 @@ impl Popup {
         }
     }
 
-    fn close(self) {
+    fn close(mut self) {
+        self._outside_hook.take();
         // SAFETY: Our own window, destroyed once; the owner gets a message
         // so its loop notices the menu is gone, as with the native menu.
         unsafe {
             let foreground = GetForegroundWindow();
             let restore = foreground == self.hwnd || foreground == self.owner;
             let _ = KillTimer(Some(self.hwnd), FOCUS_TIMER);
-            let _ = ReleaseCapture();
             let _ = DestroyWindow(self.hwnd);
             let _ = PostMessageW(Some(self.owner), WM_NULL, WPARAM(0), LPARAM(0));
             if restore {
@@ -883,9 +969,6 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
         WM_ACTIVATE if (w.0 & 0xFFFF) as u32 == WA_INACTIVE => {
             DISMISSED.store(true, Ordering::Relaxed);
         }
-        WM_CAPTURECHANGED if l.0 != hwnd.0 as isize => {
-            DISMISSED.store(true, Ordering::Relaxed);
-        }
         WM_CANCELMODE => DISMISSED.store(true, Ordering::Relaxed),
         WM_SETCURSOR => {
             // SAFETY: The stock arrow cursor is owned by Windows.
@@ -898,6 +981,38 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
     }
     // SAFETY: Default handling for our own window.
     unsafe { DefWindowProcW(hwnd, msg, w, l) }
+}
+
+unsafe extern "system" fn outside_click_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code >= 0
+        && matches!(
+            w.0 as u32,
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+        )
+    {
+        // SAFETY: Windows provides an MSLLHOOKSTRUCT for mouse hook actions.
+        let point = unsafe { (*(l.0 as *const MSLLHOOKSTRUCT)).pt };
+        let inside = point_in_rect(
+            MENU_LEFT.load(Ordering::Relaxed),
+            MENU_TOP.load(Ordering::Relaxed),
+            MENU_RIGHT.load(Ordering::Relaxed),
+            MENU_BOTTOM.load(Ordering::Relaxed),
+            point,
+        );
+        if !inside {
+            DISMISSED.store(true, Ordering::Relaxed);
+            let hwnd = MENU_HWND.load(Ordering::Relaxed);
+            if hwnd != 0 {
+                // SAFETY: Wake `GetMessageW` on the popup's thread; the HWND is
+                // cleared before `DestroyWindow`.
+                unsafe {
+                    let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_NULL, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    }
+    // SAFETY: Never consume the click; the target application must receive it.
+    unsafe { CallNextHookEx(None, code, w, l) }
 }
 
 /// `true` for an icon drawn in white only: every visible pixel near white.
@@ -1207,5 +1322,55 @@ mod tests {
             ("Show Desktop".to_owned(), Some('d'))
         );
         assert_eq!(strip_mnemonic("A && B"), ("A & B".to_owned(), None));
+    }
+
+    #[test]
+    fn focus_poll_decision_handles_failed_and_acquired_foreground() {
+        let own = 100;
+        let prev = 200;
+        let other = 300;
+
+        // Failed SetForegroundWindow: stays open while previous window remains active.
+        assert_eq!(
+            focus_poll_decision(false, prev, own, prev, true),
+            (false, false)
+        );
+        // Failed SetForegroundWindow: closes after ARM_DELAY if user switches to a third window.
+        assert_eq!(
+            focus_poll_decision(false, other, own, prev, true),
+            (true, false)
+        );
+        assert_eq!(
+            focus_poll_decision(false, other, own, prev, false),
+            (false, false)
+        );
+        // Failed SetForegroundWindow: promotes when the popup later gains focus.
+        assert_eq!(
+            focus_poll_decision(false, own, own, prev, true),
+            (false, true)
+        );
+
+        // Acquired foreground: stays open while own is active, closes if lost after ARM_DELAY.
+        assert_eq!(
+            focus_poll_decision(true, own, own, prev, true),
+            (false, true)
+        );
+        assert_eq!(
+            focus_poll_decision(true, other, own, prev, false),
+            (false, true)
+        );
+        assert_eq!(
+            focus_poll_decision(true, other, own, prev, true),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn point_in_rect_uses_half_open_bounds() {
+        assert!(point_in_rect(10, 20, 110, 220, POINT { x: 10, y: 20 }));
+        assert!(point_in_rect(10, 20, 110, 220, POINT { x: 50, y: 100 }));
+        assert!(!point_in_rect(10, 20, 110, 220, POINT { x: 110, y: 20 }));
+        assert!(!point_in_rect(10, 20, 110, 220, POINT { x: 10, y: 220 }));
+        assert!(!point_in_rect(10, 20, 110, 220, POINT { x: 9, y: 20 }));
     }
 }

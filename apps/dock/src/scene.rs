@@ -348,7 +348,7 @@ pub(crate) fn is_light_rgb((r, g, b): (u8, u8, u8)) -> bool {
     0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b) > 140.0
 }
 
-/// Resolves `(fill_color, top_border_color, effective_light)` for the full-width taskbar.
+/// Resolves `(fill_color, effective_light)` for the full-width taskbar.
 /// Returns `None` for `TaskbarStyle::Clear`.
 #[must_use]
 pub(crate) fn resolve_taskbar_colors(
@@ -356,7 +356,7 @@ pub(crate) fn resolve_taskbar_colors(
     color: Option<(u8, u8, u8)>,
     light_theme: bool,
     glass: bool,
-) -> Option<(Color, Color, bool)> {
+) -> Option<(Color, bool)> {
     use navalia_config::TaskbarStyle;
     let effective_light = color.map_or(light_theme, is_light_rgb);
     match style {
@@ -379,12 +379,7 @@ pub(crate) fn resolve_taskbar_colors(
                     }
                 }
             };
-            let border = if effective_light {
-                rgba(0, 0, 0, 22)
-            } else {
-                rgba(255, 255, 255, 42)
-            };
-            Some((fill, border, effective_light))
+            Some((fill, effective_light))
         }
         TaskbarStyle::Opaque => {
             let fill = match color {
@@ -392,12 +387,7 @@ pub(crate) fn resolve_taskbar_colors(
                 None if effective_light => rgba(242, 243, 247, 255),
                 None => rgba(24, 24, 28, 255),
             };
-            let border = if effective_light {
-                rgba(0, 0, 0, 24)
-            } else {
-                rgba(255, 255, 255, 28)
-            };
-            Some((fill, border, effective_light))
+            Some((fill, effective_light))
         }
     }
 }
@@ -413,14 +403,11 @@ pub(crate) fn taskbar_bar_visual(
     color: Option<(u8, u8, u8)>,
     light_theme: bool,
     glass: bool,
-    scale: f32,
 ) -> Result<Option<ContainerVisual>> {
     if width <= 0.0 || height <= 0.0 {
         return Ok(None);
     }
-    let Some((fill_color, border_color, _)) =
-        resolve_taskbar_colors(style, color, light_theme, glass)
-    else {
+    let Some((fill_color, _)) = resolve_taskbar_colors(style, color, light_theme, glass) else {
         return Ok(None);
     };
     let c = &gfx.compositor;
@@ -440,12 +427,6 @@ pub(crate) fn taskbar_bar_visual(
     tint.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
     tint.SetBrush(&c.CreateColorBrushWithColor(fill_color)?)?;
     children.InsertAtTop(&tint)?;
-
-    let border = c.CreateSpriteVisual()?;
-    border.SetSize(v2(width, scale.max(1.0)))?;
-    border.SetOffset(v3(0.0, 0.0))?;
-    border.SetBrush(&c.CreateColorBrushWithColor(border_color)?)?;
-    children.InsertAtTop(&border)?;
 
     Ok(Some(container))
 }
@@ -805,13 +786,13 @@ mod attention_tests {
             None
         );
 
-        let (frosted_fill, _, frosted_light) =
+        let (frosted_fill, frosted_light) =
             resolve_taskbar_colors(TaskbarStyle::Frosted, Some((240, 240, 245)), false, true)
                 .unwrap_or_default();
         assert!(frosted_light);
         assert_eq!(frosted_fill.A, 155);
 
-        let (opaque_fill, _, opaque_light) =
+        let (opaque_fill, opaque_light) =
             resolve_taskbar_colors(TaskbarStyle::Opaque, Some((20, 30, 40)), true, true)
                 .unwrap_or_default();
         assert!(!opaque_light);
@@ -937,7 +918,6 @@ impl Scene {
                 tb.color,
                 theme.light,
                 theme.glass,
-                scale,
             )?
         {
             layers.InsertAtTop(&backdrop)?;

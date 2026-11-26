@@ -84,7 +84,9 @@ impl AppBar {
             ..Default::default()
         };
         // SAFETY: `data` is a valid APPBARDATA with its size initialized.
-        let registered = unsafe { SHAppBarMessage(ABM_NEW, &mut data) } != 0;
+        let registered =
+            crate::tray::with_explorer_in_front(|| unsafe { SHAppBarMessage(ABM_NEW, &mut data) })
+                != 0;
         registered.then_some(Self {
             hwnd,
             reserved: None,
@@ -114,13 +116,13 @@ impl AppBar {
             ..Default::default()
         };
         // SAFETY: `data` has its size initialized and remains valid for both synchronous calls.
-        unsafe {
+        crate::tray::with_explorer_in_front(|| unsafe {
             SHAppBarMessage(ABM_QUERYPOS, &mut data);
             // Another bar on the same edge (the Windows taskbar, before it is
             // hidden) pushes the strip inward, so preserve its thickness.
             data.rc = keep_thickness(edge, data.rc, thickness);
             SHAppBarMessage(ABM_SETPOS, &mut data);
-        }
+        });
         // Treat the reservation as complete only if the system granted the
         // requested area; otherwise, retry on the next call.
         self.reserved = granted(edge, data.rc, wanted).then_some(wanted);
@@ -135,7 +137,7 @@ impl Drop for AppBar {
             ..Default::default()
         };
         // SAFETY: `data` has its size initialized and remains valid for the synchronous call.
-        unsafe { SHAppBarMessage(ABM_REMOVE, &mut data) };
+        crate::tray::with_explorer_in_front(|| unsafe { SHAppBarMessage(ABM_REMOVE, &mut data) });
     }
 }
 

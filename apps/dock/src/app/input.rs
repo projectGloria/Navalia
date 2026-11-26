@@ -52,6 +52,9 @@ pub(super) fn group_is_foreground(windows: &[isize], foreground: isize) -> bool 
 
 impl App {
     pub(super) fn on_mouse_move(&mut self) -> Result<()> {
+        if self.menu_open {
+            return Ok(());
+        }
         // A player or browser can enter full screen without changing focus.
         // Do not let a stale reveal-strip message raise the dock above it.
         if !self.hovering {

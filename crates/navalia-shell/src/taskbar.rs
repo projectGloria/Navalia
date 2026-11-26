@@ -226,7 +226,8 @@ fn appbar_data() -> APPBARDATA {
 fn autohide_enabled() -> bool {
     let mut data = appbar_data();
     // SAFETY: `data` is a valid APPBARDATA with its size initialized.
-    let state = unsafe { SHAppBarMessage(ABM_GETSTATE, &mut data) };
+    let state =
+        crate::tray::with_explorer_in_front(|| unsafe { SHAppBarMessage(ABM_GETSTATE, &mut data) });
     state as u32 & ABS_AUTOHIDE != 0
 }
 
@@ -234,7 +235,7 @@ fn set_autohide(enabled: bool) {
     let mut data = appbar_data();
     data.lParam = LPARAM(if enabled { ABS_AUTOHIDE as isize } else { 0 });
     // SAFETY: Same as above.
-    unsafe { SHAppBarMessage(ABM_SETSTATE, &mut data) };
+    crate::tray::with_explorer_in_front(|| unsafe { SHAppBarMessage(ABM_SETSTATE, &mut data) });
 }
 
 fn set_ghost(hwnd: HWND, ghost: bool) -> bool {
