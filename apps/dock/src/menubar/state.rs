@@ -86,7 +86,7 @@ impl MenuBar {
             ACCESSORIES_CHANGED,
             self.visible && (!self.auto_hide || self.revealed),
         )
-        .inspect_err(|error| eprintln!("navalia: accesorios: {error:#}"))
+        .inspect_err(|error| navalia_shell::log::line(&format!("accessories: {error:#}")))
         .ok();
         self.refresh(gfx)
     }

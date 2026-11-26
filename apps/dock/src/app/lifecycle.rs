@@ -51,10 +51,10 @@ use crate::{assets::Visuals, drop::DropTarget, gfx::Gfx, strings, thumbnails::Th
 use super::{
     APP, APPBAR_CALLBACK, ASSETS_READY, App, BIN_CHANGED, CLOAK_HOOK, CONFIG_CHANGED, DROP_WINDOW,
     FOREGROUND_HOOK, HOVER_OMEGA, LAST_FRONT, LAUNCH_BOUNCE_LIMIT, LOCATION_HOOK, MAIN_WINDOW,
-    MAX_SNAPSHOTS, MINIMIZE_HOOK, MOVESIZE_HOOK, Outside, PINS_CHANGED, PreviewOrder, SHELL_HOOK,
-    SYNC_DELAY_MS, SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_MAX_ATTEMPTS,
-    TASKBAR_PREFS_CHANGED, TASKBAR_TAKEN, TASKBAR_TIMER, UPDATE_AFTER_START, UPDATE_EVERY,
-    UPDATE_RETRY, UPDATE_TIMER, WINDOW_CLASS,
+    MAX_SNAPSHOTS, MINIMIZE_HOOK, MOVESIZE_HOOK, Outside, PINS_CHANGED, SHELL_HOOK, SYNC_DELAY_MS,
+    SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_MAX_ATTEMPTS, TASKBAR_PREFS_CHANGED,
+    TASKBAR_TAKEN, TASKBAR_TIMER, UPDATE_AFTER_START, UPDATE_EVERY, UPDATE_RETRY, UPDATE_TIMER,
+    WINDOW_CLASS,
     events::{on_win_event, wndproc},
     feedback::query_bin_in_background,
     millis,
@@ -119,7 +119,7 @@ pub(super) fn message_loop() {
             if was_animating != Some(animating) {
                 power::set_thread_efficiency(!animating);
                 if was_animating == Some(true) {
-                    with_app("recorte de memoria", |app| {
+                    with_app("memory trim", |app| {
                         app.schedule_trim();
                         Ok(())
                     });
@@ -227,7 +227,6 @@ pub fn run() -> Result<()> {
             roster,
             tracker: WindowTracker::default(),
             windows: Vec::new(),
-            preview_order: PreviewOrder::default(),
             last_rects: HashMap::new(),
             entries: Vec::new(),
             icons: Visuals::new(visual, ASSETS_READY)?,
@@ -274,8 +273,6 @@ pub fn run() -> Result<()> {
             stage: None,
             hovering: false,
             hovered: None,
-            preview_candidate: None,
-            preview: None,
             group_view: None,
             group_was_open: None,
             ghost: None,
@@ -399,12 +396,10 @@ pub fn run() -> Result<()> {
     // Hiding the taskbar is a synchronous Explorer call that takes 50–500 ms
     // depending on load. Run it off the UI thread after the dock is visible.
     query_bin_in_background();
-    with_app("ocultar la barra de Windows", |app| {
-        app.request_taskbar(false)
-    });
+    with_app("hide Windows taskbar", |app| app.request_taskbar(false));
 
     navalia_shell::log::line(&format!(
-        "interfaz inicializada en {} ms desde app::run; comienza el bucle de mensajes",
+        "UI ready {} ms after app::run; entering the message loop",
         startup.elapsed().as_millis()
     ));
     message_loop();

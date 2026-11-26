@@ -32,10 +32,7 @@ use windows::{
         System::{
             DataExchange::COPYDATASTRUCT,
             LibraryLoader::GetModuleHandleW,
-            Threading::{
-                GetCurrentProcessId, OpenProcess, PROCESS_NAME_WIN32,
-                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-            },
+            Threading::{GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
         },
         UI::WindowsAndMessaging::{
             AllowSetForegroundWindow, ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW,
@@ -50,7 +47,7 @@ use windows::{
             WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
-    core::{BOOL, PCWSTR, PWSTR, w},
+    core::{BOOL, PCWSTR, w},
 };
 
 use crate::icons::{IconImage, icon_image};
@@ -709,19 +706,12 @@ fn is_navalia_process(pid: u32, folder: Option<&std::path::Path>) -> bool {
         let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
             return false;
         };
-        let mut buffer = vec![0u16; 32_768];
-        let mut len = buffer.len() as u32;
-        let read = QueryFullProcessImageNameW(
-            process,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &mut len,
-        );
+        let read = crate::paths::query_process_image(process);
         let _ = CloseHandle(process);
-        if read.is_err() {
+        let Some(read) = read else {
             return false;
-        }
-        std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len as usize]))
+        };
+        std::path::PathBuf::from(read)
     };
     image
         .parent()

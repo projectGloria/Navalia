@@ -141,8 +141,8 @@ pub struct Config {
     /// The mascot also suggests a break after 90 minutes of work without a
     /// pause. Off by default: a reminder is only welcome when asked for.
     pub mascot_break_reminder: bool,
-    /// Settings asks GitHub Releases for a newer version when it opens. The
-    /// only network access in Navalia, so it can be turned off.
+    /// Settings asks GitHub Releases for a newer version when it opens. Off
+    /// stops every update check (AI usage and wallpapers have their own).
     pub check_updates: bool,
     /// With `check_updates`: once a day, while the user is away from the
     /// computer, new versions are downloaded and installed without asking.

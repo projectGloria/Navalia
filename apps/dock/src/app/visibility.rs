@@ -49,7 +49,6 @@ impl App {
                 || self.hovering
                 || self.drag.is_some()
                 || self.switching
-                || self.preview.is_some()
                 || self.group_view.is_some())
         {
             return Ok(());
@@ -113,9 +112,7 @@ impl App {
                 && (self.config.menu_bar_auto_hide || self.config.menu_bar_smart_hide));
         if enabled && self.edge_watch.is_none() {
             self.edge_watch = EdgeWatch::start(self.visual)
-                .inspect_err(|error| {
-                    navalia_shell::log::line(&format!("bordes de pantalla: {error:#}"))
-                })
+                .inspect_err(|error| navalia_shell::log::line(&format!("screen edges: {error:#}")))
                 .ok();
         } else if !enabled && self.edge_watch.take().is_some() {
             // SAFETY: This timer belongs to our UI thread.
@@ -206,7 +203,6 @@ impl App {
             .as_ref()
             .is_none_or(|stage| stage.key.screen != screen);
         if switched {
-            self.close_preview();
             self.stop_mascot();
             self.dock_display = Some(POINT {
                 x: screen.left + (screen.right - screen.left) / 2,
@@ -323,7 +319,6 @@ impl App {
             self.fullscreen = fullscreen;
             if fullscreen {
                 self.stop_mascot();
-                self.close_preview();
                 self.close_group_view();
                 self.hovering = false;
                 self.amount = Spring::at(0.0, HOVER_OMEGA);

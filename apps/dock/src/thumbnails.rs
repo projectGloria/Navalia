@@ -112,31 +112,6 @@ impl Thumbnails {
         };
         thumbnail.update(destination, opacity);
     }
-
-    /// Fits the preview with its bottom edge on the caption's common baseline.
-    /// Returns the actual DWM bounds so the hover outline can follow the image.
-    pub fn place_preview(&mut self, hwnd: isize, slot: RECT, opacity: u8) -> Option<RECT> {
-        let thumbnail = self.live.get_mut(&hwnd)?;
-        let width = (slot.right - slot.left) as f32;
-        let (w, h) = thumbnail.fit(width, (slot.bottom - slot.top) as f32);
-        let w = w.round().max(1.0) as i32;
-        let h = h.round().max(1.0) as i32;
-        let left = slot.left + ((slot.right - slot.left) - w) / 2;
-        let destination = RECT {
-            left,
-            top: slot.bottom - h,
-            right: left + w,
-            bottom: slot.bottom,
-        };
-        thumbnail
-            .update(destination, opacity)
-            .then_some(destination)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn placed_bounds(&self, hwnd: isize) -> Option<RECT> {
-        self.live.get(&hwnd)?.placed.map(|(bounds, _)| bounds)
-    }
 }
 
 impl Thumbnail {

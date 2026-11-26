@@ -24,16 +24,13 @@ use windows::{
                 Common::{
                     D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT,
                     D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
-                    D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT,
+                    D2D1_PIXEL_FORMAT,
                 },
-                D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1,
-                D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
-                D2D1_COLOR_SPACE_SRGB, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-                D2D1_EXTEND_MODE_CLAMP, D2D1_INTERPOLATION_MODE,
-                D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
-                D2D1_PRIMITIVE_BLEND_COPY, D2D1_PRIMITIVE_BLEND_SOURCE_OVER, D2D1_ROUNDED_RECT,
-                D2D1CreateDevice, ID2D1Device, ID2D1DeviceContext,
+                D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_DRAW_TEXT_OPTIONS_NONE,
+                D2D1_ELLIPSE, D2D1_INTERPOLATION_MODE, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_PRIMITIVE_BLEND_COPY,
+                D2D1_PRIMITIVE_BLEND_SOURCE_OVER, D2D1_ROUNDED_RECT, D2D1CreateDevice, ID2D1Device,
+                ID2D1DeviceContext,
             },
             Direct3D::D3D_DRIVER_TYPE_WARP,
             Direct3D11::{
@@ -784,155 +781,6 @@ impl Gfx {
                     (size * 0.035).max(1.0),
                     None,
                 );
-            }
-            Ok(())
-        })
-    }
-
-    /// Circular "✕" close button for preview thumbnails and notification banners.
-    pub fn close_button_brush(
-        &self,
-        side: u32,
-        hovered: bool,
-        light: bool,
-    ) -> Result<CompositionSurfaceBrush> {
-        let size = side as f32;
-        self.draw(side, side, |dc| {
-            let center = size / 2.0;
-            let radius = (size / 2.0) - 1.0;
-            let ellipse = D2D1_ELLIPSE {
-                point: Vector2 {
-                    X: center,
-                    Y: center,
-                },
-                radiusX: radius,
-                radiusY: radius,
-            };
-            // SAFETY: Direct2D drawing calls with valid brushes.
-            unsafe {
-                let (bg_color, cross_color) = if hovered {
-                    // macOS traffic-light close button red when hovered
-                    (rgb(1.0, 0.37, 0.34, 1.0), rgb(1.0, 1.0, 1.0, 0.95))
-                } else if light {
-                    (rgb(0.0, 0.0, 0.0, 0.22), rgb(1.0, 1.0, 1.0, 0.9))
-                } else {
-                    (rgb(1.0, 1.0, 1.0, 0.22), rgb(1.0, 1.0, 1.0, 0.9))
-                };
-                let bg_brush = dc.CreateSolidColorBrush(&bg_color, None)?;
-                dc.FillEllipse(&ellipse, &bg_brush);
-
-                let cross_brush = dc.CreateSolidColorBrush(&cross_color, None)?;
-                let arm = radius * 0.42;
-                let stroke_width = (size * 0.08).max(1.2);
-                dc.DrawLine(
-                    Vector2 {
-                        X: center - arm,
-                        Y: center - arm,
-                    },
-                    Vector2 {
-                        X: center + arm,
-                        Y: center + arm,
-                    },
-                    &cross_brush,
-                    stroke_width,
-                    None,
-                );
-                dc.DrawLine(
-                    Vector2 {
-                        X: center - arm,
-                        Y: center + arm,
-                    },
-                    Vector2 {
-                        X: center + arm,
-                        Y: center - arm,
-                    },
-                    &cross_brush,
-                    stroke_width,
-                    None,
-                );
-            }
-            Ok(())
-        })
-    }
-
-    pub fn start_brush(&self, side: u32) -> Result<CompositionSurfaceBrush> {
-        let size = side as f32;
-        self.draw(side, side, |dc| {
-            // Same margin and corner ratio as a macOS app icon.
-            let inset = size * 0.08;
-            let tile = D2D_RECT_F {
-                left: inset,
-                top: inset,
-                right: size - inset,
-                bottom: size - inset,
-            };
-            let radius = (size - 2.0 * inset) * 0.225;
-            let stops = [
-                D2D1_GRADIENT_STOP {
-                    position: 0.0,
-                    color: rgb(0.40, 0.80, 1.0, 1.0),
-                },
-                D2D1_GRADIENT_STOP {
-                    position: 1.0,
-                    color: rgb(0.04, 0.42, 0.95, 1.0),
-                },
-            ];
-            // SAFETY: Brushes and geometry live for the duration of the drawing calls.
-            unsafe {
-                let collection = dc.CreateGradientStopCollection(
-                    &stops,
-                    D2D1_COLOR_SPACE_SRGB,
-                    D2D1_COLOR_SPACE_SRGB,
-                    D2D1_BUFFER_PRECISION_8BPC_UNORM,
-                    D2D1_EXTEND_MODE_CLAMP,
-                    D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
-                )?;
-                let gradient = dc.CreateLinearGradientBrush(
-                    &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                        startPoint: Vector2 {
-                            X: 0.0,
-                            Y: tile.top,
-                        },
-                        endPoint: Vector2 {
-                            X: 0.0,
-                            Y: tile.bottom,
-                        },
-                    },
-                    None,
-                    &collection,
-                )?;
-                dc.FillRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect: tile,
-                        radiusX: radius,
-                        radiusY: radius,
-                    },
-                    &gradient,
-                );
-
-                // The Windows logo: four square panes split by a thin gap
-                // (0.85 of 18.5 units in its SVG), on whole pixels so the
-                // edges stay sharp at every icon size.
-                let white = dc.CreateSolidColorBrush(&rgb(1.0, 1.0, 1.0, 0.97), None)?;
-                let logo = (size * 0.44).round();
-                let gap = (logo * 0.046).round().max(1.0);
-                let pane = ((logo - gap) / 2.0).floor();
-                let origin = ((size - (2.0 * pane + gap)) / 2.0).round();
-                for row in 0..2 {
-                    for column in 0..2 {
-                        let left = origin + column as f32 * (pane + gap);
-                        let top = origin + row as f32 * (pane + gap);
-                        dc.FillRectangle(
-                            &D2D_RECT_F {
-                                left,
-                                top,
-                                right: left + pane,
-                                bottom: top + pane,
-                            },
-                            &white,
-                        );
-                    }
-                }
             }
             Ok(())
         })

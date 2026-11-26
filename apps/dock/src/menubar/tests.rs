@@ -47,7 +47,6 @@ mod island_tests {
             for (action, on) in [
                 (Action::Search, look.status.buttons.search),
                 (Action::TaskView, look.status.buttons.task_view),
-                (Action::Widgets, look.status.buttons.widgets),
             ] {
                 assert_eq!(
                     bar.zones.iter().filter(|(_, _, a)| *a == action).count(),

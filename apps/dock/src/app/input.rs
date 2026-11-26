@@ -102,9 +102,7 @@ impl App {
         // the mouse cancels the request, and without it the dock would
         // never hear the pointer leave and stay magnified.
         self.track_leave()?;
-        self.render()?;
-        self.aim_preview();
-        Ok(())
+        self.render()
     }
 
     pub(super) fn track_leave(&self) -> Result<()> {
@@ -154,9 +152,6 @@ impl App {
             return Ok(());
         }
         self.hovering = false;
-        if self.preview.is_none() {
-            self.close_preview();
-        }
         self.amount.target = 0.0;
         self.last_frame = Instant::now();
         if self.config.hides_automatically() {
@@ -177,7 +172,6 @@ impl App {
     }
 
     pub(super) fn on_press(&mut self) -> Result<()> {
-        self.close_preview();
         // Any press on the dock closes an unfolded group; on the group
         // itself, `on_click` then leaves it closed.
         self.group_was_open = self.group_view.as_ref().map(|view| view.group_id.clone());

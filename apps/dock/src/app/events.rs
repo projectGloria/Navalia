@@ -23,7 +23,7 @@ use windows::Win32::{
     },
 };
 
-use crate::{edge_watch, folder_menu, multi_window_view::MultiWindowAction};
+use crate::{edge_watch, folder_menu};
 
 use super::{
     APPBAR_CALLBACK, ASSETS_DELAY_MS, ASSETS_READY, ASSETS_TIMER, App, BIN_CHANGED, BIN_DELAY_MS,
@@ -31,11 +31,10 @@ use super::{
     EDGE_TIMER, FULLSCREEN_TIMER, HEALTH_CHECK, HIDE_TIMER, HSHELL_FLASH, HSHELL_LANGUAGE,
     HSHELL_REDRAW, HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWDESTROYED,
     LAST_FRONT, MASCOT_TIMER, Outside, PBT_APMPOWERSTATUSCHANGE, PBT_APMRESUMEAUTOMATIC,
-    PBT_POWERSETTINGCHANGE, PINS_CHANGED, PINS_DELAY_MS, PINS_TIMER, PREVIEW_TIMER,
-    REFRESH_DELAY_MS, REFRESH_TIMER, SHELL_HOOK, SPI_SETWORKAREA, SPRING_TIMER, SWITCHER_TIMER,
-    SYNC_DELAY_MS, SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_PREFS_CHANGED,
-    TASKBAR_TAKEN, TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WELCOME_TIMER, WM_MOUSELEAVE,
-    WM_POWERBROADCAST,
+    PBT_POWERSETTINGCHANGE, PINS_CHANGED, PINS_DELAY_MS, PINS_TIMER, REFRESH_DELAY_MS,
+    REFRESH_TIMER, SHELL_HOOK, SPI_SETWORKAREA, SPRING_TIMER, SWITCHER_TIMER, SYNC_DELAY_MS,
+    SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_PREFS_CHANGED, TASKBAR_TAKEN,
+    TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WELCOME_TIMER, WM_MOUSELEAVE, WM_POWERBROADCAST,
     feedback::query_bin_in_background,
     lifecycle::{is_tracked, main_window},
     with_app, with_app_then,
@@ -68,20 +67,20 @@ pub(super) unsafe extern "system" fn on_win_event(
         return;
     }
     if event == EVENT_SYSTEM_MINIMIZESTART {
-        with_app("minimizar", |app| app.on_minimize_start(hwnd.0 as isize));
+        with_app("minimize", |app| app.on_minimize_start(hwnd.0 as isize));
     } else if event == EVENT_SYSTEM_MINIMIZEEND {
         // Restored from outside the dock (Alt+Tab, the app itself): no shell
         // hook reports it, and a window the dock still thought minimized kept
         // its thumbnail and skipped the genie on its next minimize.
-        with_app("restaurar", App::sync);
+        with_app("restore", App::sync);
     } else if event == EVENT_SYSTEM_FOREGROUND {
         if tracker::is_task_switcher(hwnd) {
             with_app("Alt+Tab", App::task_switcher_opened);
         } else if taskbar::is_hidden(hwnd) && !launcher::opening_hidden_icons() {
-            with_app("barra de tareas oculta", App::leave_hidden_taskbar);
+            with_app("hidden taskbar", App::leave_hidden_taskbar);
         } else if !tracker::is_switch_transient(hwnd) {
             LAST_FRONT.store(hwnd.0 as isize, Ordering::Relaxed);
-            with_app("ventana activa", App::on_foreground_changed);
+            with_app("active window", App::on_foreground_changed);
         }
     } else if event == EVENT_OBJECT_LOCATIONCHANGE {
         // Only the foreground top-level window matters. Ignore child controls,
@@ -121,7 +120,7 @@ pub(super) fn with_app_value<T: Default>(
 }
 
 pub fn menu_bar_clicked(x: f32, y: f32) {
-    with_app_then("barra superior", |app| {
+    with_app_then("menu bar", |app| {
         if let Some(bar) = &mut app.menubar {
             if let Some(anchor) = bar.input_switcher_anchor(x, y) {
                 bar.dismiss_island(&app.gfx)?;
@@ -138,7 +137,7 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
 }
 
 pub fn menu_bar_volume_press(x: f32, y: f32) {
-    with_app("volumen", |app| {
+    with_app("volume", |app| {
         if let Some(bar) = &mut app.menubar {
             bar.press_volume(&app.gfx, x, y)?;
         }
@@ -147,35 +146,35 @@ pub fn menu_bar_volume_press(x: f32, y: f32) {
 }
 
 pub fn menu_bar_scrolled(point: POINT, delta: i16) -> bool {
-    with_app_value("desplazar uso de IA", |app| match &mut app.menubar {
+    with_app_value("scroll AI usage", |app| match &mut app.menubar {
         Some(bar) => bar.scroll_usage_at(point, delta),
         None => Ok(false),
     })
 }
 
 pub fn menu_bar_volume_release(y: Option<f32>) -> bool {
-    with_app_value("volumen", |app| match &mut app.menubar {
+    with_app_value("volume", |app| match &mut app.menubar {
         Some(bar) => bar.release_volume(y),
         None => Ok(false),
     })
 }
 
 pub fn menu_bar_volume_flush() {
-    with_app("volumen", |app| match &mut app.menubar {
+    with_app("volume", |app| match &mut app.menubar {
         Some(bar) => bar.flush_volume(),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_progress_tick() {
-    with_app("progreso multimedia", |app| match &mut app.menubar {
+    with_app("media progress", |app| match &mut app.menubar {
         Some(bar) => bar.progress_tick(&app.gfx),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_monitor_tick() {
-    with_app("monitor del sistema", |app| match &mut app.menubar {
+    with_app("system monitor", |app| match &mut app.menubar {
         Some(bar) => bar.monitor_tick(&app.gfx),
         None => Ok(()),
     });
@@ -205,7 +204,7 @@ pub fn menu_bar_bluetooth_changed() {
 /// A right click on the bar: `true` if it opened a tray icon's menu.
 pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
     let mut handled = false;
-    with_app("bandeja del sistema", |app| {
+    with_app("system tray", |app| {
         if let Some(bar) = &mut app.menubar {
             handled = bar.right_click(&app.gfx, x, y)?;
         }
@@ -215,109 +214,23 @@ pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
 }
 
 pub fn menu_bar_tray_changed() {
-    with_app("bandeja del sistema", |app| match &mut app.menubar {
+    with_app("system tray", |app| match &mut app.menubar {
         Some(bar) => bar.tray_changed(&app.gfx),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_accessories_changed() {
-    with_app("accesorios", |app| match &mut app.menubar {
+    with_app("accessories", |app| match &mut app.menubar {
         Some(bar) => bar.accessories_changed(&app.gfx),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_accessories_reset() {
-    with_app("reanudar accesorios", |app| match &mut app.menubar {
+    with_app("resume accessories", |app| match &mut app.menubar {
         Some(bar) => bar.restart_accessories(&app.gfx),
         None => Ok(()),
-    });
-}
-
-pub fn multi_window_view_tick() {
-    with_app("vistas de ventanas", |app| {
-        if let Some(view) = &mut app.preview
-            && !view.tick()?
-        {
-            app.close_preview();
-            app.render()?;
-        }
-        Ok(())
-    });
-}
-
-pub fn multi_window_view_press() {
-    with_app("seleccionar ventana", |app| {
-        if let Some(view) = &mut app.preview {
-            view.press()?;
-        }
-        Ok(())
-    });
-}
-
-pub fn multi_window_view_release() {
-    with_app_then("abrir ventana", |app| {
-        let action = match &mut app.preview {
-            Some(view) => view.release()?,
-            None => None,
-        };
-        match action {
-            Some(MultiWindowAction::Activate(hwnd)) => {
-                app.close_preview();
-                // Resolve against the current tracker snapshot: a closed window
-                // must never select a different entry by its former index.
-                if app.windows.iter().any(|window| window.hwnd == hwnd) {
-                    return Ok(app.activating(vec![hwnd]));
-                }
-            }
-            Some(MultiWindowAction::Close(hwnd)) => {
-                navalia_shell::tracker::request_close_window(hwnd);
-                if let Some(view) = &mut app.preview {
-                    let still_open = view.remove_window(&app.gfx, hwnd)?;
-                    if !still_open {
-                        app.close_preview();
-                    }
-                }
-            }
-            None => {}
-        }
-        Ok(None)
-    });
-}
-
-pub fn multi_window_view_middle_click() {
-    with_app("cerrar ventana por clic central", |app| {
-        let target = match &mut app.preview {
-            Some(view) => view.middle_click()?,
-            None => None,
-        };
-        if let Some(hwnd) = target {
-            navalia_shell::tracker::request_close_window(hwnd);
-            if let Some(view) = &mut app.preview {
-                let still_open = view.remove_window(&app.gfx, hwnd)?;
-                if !still_open {
-                    app.close_preview();
-                }
-            }
-        }
-        Ok(())
-    });
-}
-
-pub fn multi_window_view_scroll(previous: bool) {
-    with_app("more windows", |app| {
-        if let Some(view) = &mut app.preview {
-            view.scroll(&app.gfx, previous)?;
-        }
-        Ok(())
-    });
-}
-
-pub fn multi_window_view_dismiss() {
-    with_app("dismiss views", |app| {
-        app.close_preview();
-        app.render()
     });
 }
 
@@ -368,7 +281,7 @@ pub fn group_view_press_lost() {
 }
 
 pub fn menu_bar_check_pointer() {
-    with_app("barra superior", |app| {
+    with_app("menu bar", |app| {
         if app.menu_open {
             Ok(())
         } else {
@@ -381,21 +294,21 @@ pub fn menu_bar_check_pointer() {
 }
 
 pub fn menu_bar_finish_hide(completed_epoch: Option<usize>) {
-    with_app("ocultar barra superior", |app| match &mut app.menubar {
+    with_app("hide menu bar", |app| match &mut app.menubar {
         Some(bar) => bar.finish_hide(&app.gfx, completed_epoch),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_pointer_moved(x: f32, y: f32) {
-    with_app("barra superior", |app| match &mut app.menubar {
+    with_app("menu bar", |app| match &mut app.menubar {
         Some(bar) => bar.pointer_moved(&app.gfx, x, y),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_dismiss_island() {
-    with_app("barra superior", |app| match &mut app.menubar {
+    with_app("menu bar", |app| match &mut app.menubar {
         Some(bar) => bar.dismiss_island(&app.gfx),
         None => Ok(()),
     });
@@ -404,7 +317,7 @@ pub fn menu_bar_dismiss_island() {
 /// Redraws the menu bar from what it reads on each draw (input language,
 /// clock), without asking the network or audio again.
 pub fn menu_bar_refresh() {
-    with_app("barra superior", |app| {
+    with_app("menu bar", |app| {
         if let Some(bar) = &mut app.menubar {
             bar.refresh(&app.gfx)?;
         }
@@ -414,14 +327,14 @@ pub fn menu_bar_refresh() {
 }
 
 pub fn menu_bar_registry_changed() {
-    with_app("barra superior", |app| match &mut app.menubar {
+    with_app("menu bar", |app| match &mut app.menubar {
         Some(bar) => bar.registry_changed(&app.gfx),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_tick() {
-    with_app("barra superior", |app| {
+    with_app("menu bar", |app| {
         if let Some(bar) = &mut app.menubar {
             bar.tick(&app.gfx)?;
         }
@@ -431,23 +344,19 @@ pub fn menu_bar_tick() {
 }
 
 pub fn drag_enter(files: Vec<String>, x: i32, y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| {
-        app.on_drag_enter(files, POINT { x, y })
-    })
+    with_app_value("file drag", |app| app.on_drag_enter(files, POINT { x, y }))
 }
 
 pub fn drag_over(x: i32, y: i32) -> DROPEFFECT {
-    with_app_value("arrastre de archivos", |app| {
-        app.on_drag_over(POINT { x, y })
-    })
+    with_app_value("file drag", |app| app.on_drag_over(POINT { x, y }))
 }
 
 pub fn drag_leave() {
-    with_app("arrastre de archivos", App::on_drag_leave);
+    with_app("file drag", App::on_drag_leave);
 }
 
 pub fn drop_files(x: i32, y: i32) -> DROPEFFECT {
-    with_app_value("soltar archivos", |app| app.on_drop(POINT { x, y }))
+    with_app_value("drop files", |app| app.on_drop(POINT { x, y }))
 }
 
 pub(super) unsafe extern "system" fn wndproc(
@@ -481,13 +390,13 @@ pub(super) unsafe extern "system" fn wndproc(
             unsafe {
                 let _ = KillTimer(Some(hwnd), ASSETS_TIMER);
             }
-            with_app("iconos del shell", App::assets_ready);
+            with_app("shell icons", App::assets_ready);
         }
         WM_MOUSEMOVE => with_app("mouse move", App::on_mouse_move),
         WM_MOUSELEAVE => with_app("mouse leave", App::on_tracked_mouse_leave),
         WM_LBUTTONDOWN => with_app("mouse press", App::on_press),
-        WM_LBUTTONUP => with_app_then("clic", App::on_release),
-        WM_MBUTTONUP => with_app_then("clic central", App::on_middle_click),
+        WM_LBUTTONUP => with_app_then("click", App::on_release),
+        WM_MBUTTONUP => with_app_then("middle click", App::on_middle_click),
         WM_CAPTURECHANGED => {
             // SAFETY: Posting a message to our own window.
             unsafe {
@@ -498,16 +407,14 @@ pub(super) unsafe extern "system" fn wndproc(
             // ReleaseCapture posts this too. A newer press may already
             // own capture by the time the deferred cancellation runs.
             if unsafe { GetCapture() } != hwnd {
-                with_app("arrastre", App::cancel_drag);
+                with_app("drag", App::cancel_drag);
             }
         }
-        WM_TIMER if w.0 == DRAG_TIMER => with_app_then("arrastre", App::poll_drag),
-        DROP_RUN => with_app_then("soltar archivos", |app| Ok(app.pending_drop.take())),
+        WM_TIMER if w.0 == DRAG_TIMER => with_app_then("drag", App::poll_drag),
+        DROP_RUN => with_app_then("drop files", |app| Ok(app.pending_drop.take())),
         WM_RBUTTONUP => with_app_then("menu", App::on_right_click),
-        BIN_STATE => with_app("papelera", |app| app.set_bin_full(w.0 != 0)),
-        TASKBAR_PREFS_CHANGED => {
-            with_app("preferencias de badges", App::taskbar_preferences_changed)
-        }
+        BIN_STATE => with_app("recycle bin", |app| app.set_bin_full(w.0 != 0)),
+        TASKBAR_PREFS_CHANGED => with_app("badge preferences", App::taskbar_preferences_changed),
         BIN_CHANGED => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe { SetTimer(Some(hwnd), BIN_TIMER, BIN_DELAY_MS, None) };
@@ -532,7 +439,7 @@ pub(super) unsafe extern "system" fn wndproc(
         }
         WM_SETTINGCHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED => {
             if matches!(msg, WM_DISPLAYCHANGE | WM_DPICHANGED) {
-                with_app("pantalla de la mascota", |app| {
+                with_app("mascot screen", |app| {
                     app.stop_mascot();
                     Ok(())
                 });
@@ -566,7 +473,7 @@ pub(super) unsafe extern "system" fn wndproc(
             query_bin_in_background();
         }
         PINS_CHANGED => {
-            with_app("apps fijadas", |app| {
+            with_app("pinned apps", |app| {
                 if let Some(watch) = &mut app.pin_watch {
                     watch.arm();
                 }
@@ -580,7 +487,7 @@ pub(super) unsafe extern "system" fn wndproc(
             unsafe {
                 let _ = KillTimer(Some(hwnd), w.0);
             }
-            with_app("apps fijadas", App::sync_taskbar_pins);
+            with_app("pinned apps", App::sync_taskbar_pins);
         }
         WM_TIMER if w.0 == UPDATE_TIMER => {
             with_app("refresh", |app| {
@@ -592,24 +499,23 @@ pub(super) unsafe extern "system" fn wndproc(
             with_app("Alt+Tab", App::check_task_switcher);
         }
         WM_TIMER if w.0 == FULLSCREEN_TIMER => {
-            with_app("pantalla completa", App::update_fullscreen);
+            with_app("full screen", App::update_fullscreen);
         }
         WM_TIMER if w.0 == SPRING_TIMER => {
-            with_app_then("arrastre sobre una app", App::spring_open);
+            with_app_then("drag over an app", App::spring_open);
         }
-        WM_TIMER if w.0 == MASCOT_TIMER => with_app("mascota", App::mascot_tick),
-        WM_TIMER if w.0 == WELCOME_TIMER => with_app("bienvenida", App::welcome),
-        WM_TIMER if w.0 == BREAK_TIMER => with_app("descanso", App::break_tick),
+        WM_TIMER if w.0 == MASCOT_TIMER => with_app("mascot", App::mascot_tick),
+        WM_TIMER if w.0 == WELCOME_TIMER => with_app("welcome", App::welcome),
+        WM_TIMER if w.0 == BREAK_TIMER => with_app("break reminder", App::break_tick),
         // Unlocked: maybe the first time today (see `App::welcome`).
         WM_WTSSESSION_CHANGE if w.0 == WTS_SESSION_UNLOCK as usize => {
-            with_app("desbloqueo", |app| {
+            with_app("unlock", |app| {
                 app.arm_welcome();
                 Ok(())
             });
         }
-        edge_watch::CHANGED => with_app("borde de pantalla", App::edge_changed),
-        WM_TIMER if w.0 == EDGE_TIMER => with_app("mostrar al llegar al borde", App::edge_rested),
-        WM_TIMER if w.0 == PREVIEW_TIMER => with_app("selector de ventanas", App::preview_tick),
+        edge_watch::CHANGED => with_app("screen edge", App::edge_changed),
+        WM_TIMER if w.0 == EDGE_TIMER => with_app("reveal at edge", App::edge_rested),
         WM_TIMER if w.0 == HIDE_TIMER => {
             // SAFETY: Same as above.
             unsafe {
@@ -622,7 +528,7 @@ pub(super) unsafe extern "system" fn wndproc(
             unsafe {
                 let _ = KillTimer(Some(hwnd), w.0);
             }
-            with_app("recorte de memoria", |app| {
+            with_app("memory trim", |app| {
                 app.trim_if_idle();
                 Ok(())
             });
@@ -640,20 +546,18 @@ pub(super) unsafe extern "system" fn wndproc(
                     app.power_moment();
                     Ok(())
                 }),
-                SYNC_TIMER => with_app("lectura de ventanas", App::sync),
-                _ => with_app("ocultar la barra de Windows", |app| {
-                    app.request_taskbar(true)
-                }),
+                SYNC_TIMER => with_app("window scan", App::sync),
+                _ => with_app("hide Windows taskbar", |app| app.request_taskbar(true)),
             }
         }
-        APPBAR_CALLBACK => with_app("aviso de AppBar", |app| app.on_appbar_notice(w.0)),
+        APPBAR_CALLBACK => with_app("AppBar notice", |app| app.on_appbar_notice(w.0)),
         // Once the taskbar is set to auto-hide, the dock strip moves to the
         // screen edge, so reserve and reposition it again.
-        TASKBAR_TAKEN => with_app("reserva de espacio", |app| {
+        TASKBAR_TAKEN => with_app("space reservation", |app| {
             app.taskbar_taken(w.0 != 0, l.0 != 0)
         }),
         WM_POWERBROADCAST if w.0 == PBT_APMRESUMEAUTOMATIC => {
-            with_app("reanudar reserva de espacio", |app| {
+            with_app("resume space reservation", |app| {
                 app.taskbar_attempts = 0;
                 // Asleep was a pause; awake may be the first time today.
                 app.moments.rested();
@@ -668,9 +572,9 @@ pub(super) unsafe extern "system" fn wndproc(
                 Ok(())
             });
         }
-        _ if CONFIG_CHANGED.get() == Some(&msg) => with_app("ajustes", App::reload_config),
+        _ if CONFIG_CHANGED.get() == Some(&msg) => with_app("settings", App::reload_config),
         crate::overlays::OVERLAYS_CHANGED => {
-            with_app("insignias de apps", |app| {
+            with_app("app badges", |app| {
                 app.sync_badge_visuals()?;
                 app.render()
             });
@@ -678,7 +582,7 @@ pub(super) unsafe extern "system" fn wndproc(
         _ if TASKBAR_CREATED.get() == Some(&msg) => {
             // The new taskbar points its overlay calls at itself again.
             crate::overlays::reclaim();
-            with_app("Explorer reiniciado", |app| {
+            with_app("Explorer restarted", |app| {
                 app.taskbar_attempts = 0;
                 Ok(())
             });
@@ -694,7 +598,7 @@ pub(super) unsafe extern "system" fn wndproc(
             // Changing the foreground window does not change the app list; it
             // can only enter or exit full-screen mode.
             HSHELL_WINDOWACTIVATED | HSHELL_RUDEAPPACTIVATED => {
-                with_app("ventana activa", App::on_foreground_changed);
+                with_app("active window", App::on_foreground_changed);
             }
             // Terminals and browsers retitle their windows many times a minute.
             // The dock shows no titles, so only a window it does not list yet
@@ -706,7 +610,7 @@ pub(super) unsafe extern "system" fn wndproc(
                 if code == HSHELL_FLASH {
                     with_app("attention notice", |app| app.on_attention(l.0));
                 } else if code == HSHELL_WINDOWDESTROYED {
-                    with_app("ventana cerrada", |app| app.forget_attention(l.0));
+                    with_app("window closed", |app| app.forget_attention(l.0));
                 }
                 // SAFETY: `hwnd` is this live window on its owning UI thread.
                 unsafe { SetTimer(Some(hwnd), SYNC_TIMER, SYNC_DELAY_MS, None) };

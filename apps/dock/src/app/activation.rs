@@ -296,7 +296,6 @@ impl App {
             return Ok(());
         }
         self.switching = true;
-        self.close_preview();
         self.close_group_view();
         self.flights.clear();
         self.switch_started = Instant::now();
@@ -537,13 +536,6 @@ impl App {
     /// Refreshes open windows and recomposes the dock if anything changed.
     pub(super) fn sync(&mut self) -> Result<()> {
         let attention_changed = self.read_windows();
-        if self
-            .preview
-            .as_ref()
-            .is_some_and(|view| !view.matches(&self.windows_of(&view.app_id)))
-        {
-            self.close_preview();
-        }
         let windows = &self.windows;
         self.last_rects
             .retain(|hwnd, _| windows.iter().any(|window| window.hwnd == *hwnd));
@@ -615,7 +607,6 @@ impl App {
     }
 
     pub(super) fn on_foreground_changed(&mut self) -> Result<()> {
-        self.close_preview();
         let foreground = tracker::foreground_window();
         self.flights.retain(|flight| flight.is_current(foreground));
         // The app roster can stay identical while its windows change z-order.
@@ -650,7 +641,6 @@ impl App {
         self.windows = self
             .tracker
             .list_with_workspaces(self.config.show_other_workspaces);
-        self.preview_order.update(&self.windows);
         let pruned = self
             .attention
             .retain(|hwnd| self.windows.iter().any(|window| window.hwnd == hwnd));

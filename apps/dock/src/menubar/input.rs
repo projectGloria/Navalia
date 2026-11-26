@@ -353,10 +353,9 @@ impl MenuBar {
             },
             Some(Action::Power) => launcher::open_power_settings(),
             Some(Action::Network) => launcher::open_network_list(),
-            Some(Action::Sound) => launcher::open_sound(),
+            Some(Action::Sound) => launcher::open_quick_settings(),
             Some(Action::Search) => launcher::open_search(),
             Some(Action::TaskView) => launcher::open_task_view(),
-            Some(Action::Widgets) => launcher::open_widgets(),
             Some(Action::Bluetooth) => launcher::open_bluetooth(),
             Some(Action::SystemMonitor) => {
                 let _ = launcher::open("taskmgr.exe");

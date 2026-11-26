@@ -231,37 +231,6 @@ impl Theme {
         root.Children()?.InsertAtTop(&material.rim)?;
         Ok(root)
     }
-
-    /// A borderless, tint-free rounded glass surface using only the host backdrop.
-    pub fn clear_glass_panel(
-        &self,
-        gfx: &Gfx,
-        size: Vector2,
-        radius: f32,
-    ) -> Result<ContainerVisual> {
-        let c = &gfx.compositor;
-        let root = c.CreateContainerVisual()?;
-        root.SetSize(size)?;
-        let outline = c.CreateRoundedRectangleGeometry()?;
-        outline.SetSize(size)?;
-        outline.SetCornerRadius(v2(radius, radius))?;
-        root.SetClip(&c.CreateGeometricClipWithGeometry(&outline)?)?;
-
-        let fill = c.CreateSpriteVisual()?;
-        fill.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
-        if self.glass {
-            fill.SetBrush(&c.CreateHostBackdropBrush()?)?;
-        } else {
-            let fallback = if self.light {
-                rgba(240, 240, 244, 180)
-            } else {
-                rgba(28, 30, 36, 180)
-            };
-            fill.SetBrush(&c.CreateColorBrushWithColor(fallback)?)?;
-        }
-        root.Children()?.InsertAtTop(&fill)?;
-        Ok(root)
-    }
 }
 
 /// The material is shared so dock and preview panels follow the same theme

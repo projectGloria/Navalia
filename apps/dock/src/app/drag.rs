@@ -256,7 +256,6 @@ impl App {
         incoming: Vec<String>,
         point: POINT,
     ) -> Result<DROPEFFECT> {
-        self.close_preview();
         // What a single dropped app or shortcut would pin, worked out once:
         // drag-over runs on every mouse move, and reading a shortcut is a
         // COM call and a disk read.

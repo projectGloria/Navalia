@@ -119,7 +119,7 @@ impl App {
                 continue;
             }
             if id == START_ID {
-                let icon = self.gfx.start_brush(wanted).ok();
+                let icon = start_icon().and_then(|image| self.gfx.icon_brush(image, wanted).ok());
                 let label = self.gfx.label_brush(text().start, scale, light, edge).ok();
                 self.assets.insert(
                     id.clone(),
@@ -198,5 +198,51 @@ impl App {
         self.stage = None;
         self.refresh()?;
         self.update_menu_bar_app()
+    }
+}
+
+fn start_icon() -> Option<&'static navalia_shell::icons::IconImage> {
+    static ICON: std::sync::OnceLock<Option<navalia_shell::icons::IconImage>> =
+        std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        let bytes = include_bytes!("../../../../assets/start-icon.png");
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+        let mut reader = decoder.read_info().ok()?;
+        let mut rgba = vec![0; reader.output_buffer_size()?];
+        let output = reader.next_frame(&mut rgba).ok()?;
+        if output.color_type != png::ColorType::Rgba || output.bit_depth != png::BitDepth::Eight {
+            return None;
+        }
+        let mut bgra = Vec::with_capacity(output.buffer_size());
+        for pixel in rgba[..output.buffer_size()].as_chunks::<4>().0 {
+            let alpha = u16::from(pixel[3]);
+            bgra.extend_from_slice(&[
+                (u16::from(pixel[2]) * alpha / 255) as u8,
+                (u16::from(pixel[1]) * alpha / 255) as u8,
+                (u16::from(pixel[0]) * alpha / 255) as u8,
+                pixel[3],
+            ]);
+        }
+        Some(navalia_shell::icons::IconImage {
+            width: output.width,
+            height: output.height,
+            bgra,
+        })
+    })
+    .as_ref()
+}
+
+#[cfg(test)]
+mod start_icon_tests {
+    use super::start_icon;
+    use anyhow::{Context, Result};
+
+    #[test]
+    fn start_icon_decodes_embedded_png() -> Result<()> {
+        let icon = start_icon().context("embedded start-icon.png should decode")?;
+        assert_eq!((icon.width, icon.height), (512, 512));
+        assert_eq!(icon.bgra.len(), 512 * 512 * 4);
+        Ok(())
     }
 }

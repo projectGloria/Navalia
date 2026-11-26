@@ -1,5 +1,5 @@
 //! Regression harness: hidden test-owned HWNDs, no taskbar takeover or settings writes.
-use super::super::{ASSETS_READY, App, HOVER_OMEGA, Press, PreviewOrder};
+use super::super::{ASSETS_READY, App, HOVER_OMEGA, Press};
 use crate::{assets::Visuals, gfx::Gfx, thumbnails::Thumbnails};
 use anyhow::Result;
 use navalia_config::Config;
@@ -76,7 +76,6 @@ impl Fixture {
             roster: Roster::default(),
             tracker: WindowTracker::default(),
             windows: Vec::new(),
-            preview_order: PreviewOrder::default(),
             last_rects: HashMap::new(),
             entries: Vec::new(),
             icons: Visuals::new(visual, ASSETS_READY)?,
@@ -123,8 +122,6 @@ impl Fixture {
             stage: None,
             hovering: false,
             hovered: None,
-            preview_candidate: None,
-            preview: None,
             group_view: None,
             group_was_open: None,
             ghost: None,

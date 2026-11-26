@@ -182,7 +182,7 @@ impl App {
             self.slide.target = 0.0;
             self.last_frame = Instant::now();
             if let Err(error) = self.place_windows().and_then(|()| self.render()) {
-                navalia_shell::log::line(&format!("mostrar el dock para la mascota: {error:#}"));
+                navalia_shell::log::line(&format!("show the dock for the mascot: {error:#}"));
                 self.stop_mascot();
             }
         }

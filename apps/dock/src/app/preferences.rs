@@ -153,7 +153,7 @@ pub(super) fn fixed_item_preference(role: Role) -> Option<&'static str> {
 
 /// Hides only the shortcut. No folder, file or Windows pin is removed.
 pub(super) fn hide_fixed_item(path: &std::path::Path, role: Role) -> Result<Config> {
-    let key = fixed_item_preference(role).context("el elemento no es un acceso fijo")?;
+    let key = fixed_item_preference(role).context("the item is not a fixed shortcut")?;
     let patch = serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Bool(false))]);
     Ok(navalia_config::update_preferences(path, patch)?)
 }
@@ -161,7 +161,6 @@ pub(super) fn hide_fixed_item(path: &std::path::Path, role: Role) -> Result<Conf
 impl App {
     /// The settings app saved a change: read it and apply what differs.
     pub(super) fn reload_config(&mut self) -> Result<()> {
-        self.close_preview();
         self.close_group_view();
         let Ok(Some(saved)) = navalia_config::load_or_recover(&navalia_config::default_path())
         else {

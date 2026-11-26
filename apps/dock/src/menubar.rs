@@ -177,7 +177,6 @@ pub(crate) mod glyph {
     pub const MUTE: char = '\u{E74F}';
     pub const SEARCH: char = '\u{E721}';
     pub const TASK_VIEW: char = '\u{E7C4}';
-    pub const WIDGETS: char = '\u{F246}';
     /// The taskbar's "show hidden icons" arrow.
     pub const HIDDEN_ICONS: char = '\u{E70E}';
     pub const MICROPHONE: char = '\u{E720}';
@@ -203,7 +202,6 @@ enum Action {
     Sound,
     Search,
     TaskView,
-    Widgets,
     HiddenIcons,
     InputLanguage,
     Microphone,

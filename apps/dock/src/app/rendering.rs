@@ -115,9 +115,6 @@ impl App {
         if let Some(bar) = &self.menubar {
             bar.refresh_backdrops(&self.gfx)?;
         }
-        if let Some(preview) = &self.preview {
-            preview.refresh_backdrops(&self.gfx)?;
-        }
         if let Some(group) = &self.group_view {
             group.refresh_backdrops(&self.gfx)?;
         }
@@ -159,7 +156,6 @@ impl App {
         if self.stage.as_ref().is_some_and(|stage| stage.key == key) {
             return Ok(());
         }
-        self.close_preview();
         // An unfolded group shows its apps as they were: it closes if they changed.
         if let Some(view) = &self.group_view
             && self
@@ -455,7 +451,7 @@ impl App {
             && let Err(error) = bar.set_dock_cutout(&self.gfx, dock_cutout)
         {
             crate::recovery::graphics_error(&error);
-            navalia_shell::log::line(&format!("recorte de la barra inferior: {error:#}"));
+            navalia_shell::log::line(&format!("bottom bar cutout: {error:#}"));
         }
 
         let stage = Stage {
@@ -509,7 +505,7 @@ impl App {
             && let Err(error) = bar.set_taskbar_backdrop(&self.gfx, backdrop)
         {
             crate::recovery::graphics_error(&error);
-            navalia_shell::log::line(&format!("fondo de la barra inferior: {error:#}"));
+            navalia_shell::log::line(&format!("bottom bar backdrop: {error:#}"));
         }
         self.schedule_trim();
         self.render()?;
@@ -529,7 +525,15 @@ impl App {
                 DockEdge::Left => Edge::Left,
                 DockEdge::Right => Edge::Right,
             };
-            appbar.reserve(side, reservation, strip);
+            // Overlap the bottom taskbar by 1px so maximized windows' 1px bottom
+            // border (e.g. Brave/Chromium) tucks behind the topmost taskbar.
+            let reserved_strip =
+                if docked_bottom && backdrop.style != navalia_config::TaskbarStyle::Clear {
+                    strip.saturating_sub(1)
+                } else {
+                    strip
+                };
+            appbar.reserve(side, reservation, reserved_strip);
         }
         Ok(())
     }
@@ -647,9 +651,9 @@ impl App {
         let slide = self.slide.value * stage.slide_distance;
         stage.scene.apply(&Frame {
             state: &state,
-            hovered: self.hovered.filter(|&index| {
-                self.preview.is_none() && !self.menu_open && open_group != Some(index)
-            }),
+            hovered: self
+                .hovered
+                .filter(|&index| !self.menu_open && open_group != Some(index)),
             lifts: &lifts,
             drag,
             target,

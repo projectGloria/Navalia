@@ -58,7 +58,7 @@ const MAX_WIDE_PATH: usize = 32_768;
 
 /// Reads the full Win32 executable path of `process`, growing past 1024 chars
 /// when needed so long paths are never truncated.
-pub(crate) fn query_process_image(process: HANDLE) -> Option<String> {
+pub fn query_process_image(process: HANDLE) -> Option<String> {
     let mut size = 1024usize;
     loop {
         let mut buffer = vec![0u16; size];

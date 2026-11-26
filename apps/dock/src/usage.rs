@@ -236,34 +236,22 @@ pub fn active_providers() -> ActiveProviders {
 
 fn claude_process_in_use(pid: u32) -> bool {
     use windows::Win32::{
-        System::Threading::{
-            OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-            QueryFullProcessImageNameW,
-        },
+        System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
         UI::WindowsAndMessaging::{
             EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowTextLengthW,
             GetWindowThreadProcessId, IsWindowVisible, WS_EX_TOOLWINDOW,
         },
     };
-    use windows::core::{BOOL, PWSTR};
+    use windows::core::BOOL;
     static IMAGES: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
         std::sync::OnceLock::new();
     let path = unsafe {
         OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
             .ok()
             .and_then(|handle| {
-                let mut buffer = [0u16; 1024];
-                let mut length = buffer.len() as u32;
-                let result = QueryFullProcessImageNameW(
-                    handle,
-                    PROCESS_NAME_WIN32,
-                    PWSTR(buffer.as_mut_ptr()),
-                    &mut length,
-                );
+                let image = navalia_shell::paths::query_process_image(handle);
                 let _ = CloseHandle(handle);
-                result
-                    .ok()
-                    .map(|()| PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize])))
+                image.map(PathBuf::from)
             })
     };
     if let Some(path) = path {

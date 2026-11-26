@@ -150,12 +150,11 @@ pnpm build
 ## Privacy
 
 Navalia collects no data, has no telemetry and never sends anything to the
-project. It makes two kinds of network requests, both optional:
+project. It makes three kinds of network requests, all optional:
 
 - **Updates:** Settings asks GitHub Releases for a newer version when it
   opens, and once a day, a couple of minutes after you turn on the computer,
-  Navalia does the same in the background and installs what it finds (the dock
-  itself never uses the network). Turn off the installing in Settings → System
+  Navalia does the same in the background and installs what it finds. Turn off the installing in Settings → System
   → *Install updates automatically*, or everything with *Check for updates
   automatically*.
 - **AI provider usage:** while a supported client is running, Navalia reads its
@@ -167,5 +166,8 @@ project. It makes two kinds of network requests, both optional:
   the key from OpenCode's local `auth.json` or `ZAI_API_KEY` /
   `ZHIPU_API_KEY`, then sends it to Z.ai's quota service. Turn usage queries
   off in Settings → Menu bar → *Show AI provider usage*.
+- **Wallpapers:** the full-size built-in wallpapers are downloaded from this
+  project's GitHub repository only when you pick one in Settings, and each file
+  is checked against the size and SHA-256 built into your version.
 
 Details: [navalia.crafter.run/privacy](https://navalia.crafter.run/privacy).

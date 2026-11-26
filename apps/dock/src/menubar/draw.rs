@@ -579,14 +579,8 @@ impl MenuBar {
                 Action::InputLanguage,
             ));
         }
-        // The notification area (antivirus, OneDrive, apps in the background)
-        // lives only in the hidden taskbar; this arrow opens its flyout.
-        items.push((symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?, Action::HiddenIcons));
         if status.buttons.task_view {
             items.push((symbol(&[(glyph::TASK_VIEW, 1.0)])?, Action::TaskView));
-        }
-        if status.buttons.widgets {
-            items.push((symbol(&[(glyph::WIDGETS, 1.0)])?, Action::Widgets));
         }
         for (index, (item, action)) in items.iter().enumerate() {
             let label = battery_label
@@ -615,12 +609,25 @@ impl MenuBar {
         }
 
         // Live third-party tray icons (such as Antigravity, Discord, Steam)
-        // placed on the left side of the bar, left-to-right.
+        // placed on the left side of the bar, left-to-right, preceded by the
+        // hidden-icons arrow at the leftmost position.
         let tray_side = px(16.0).max(12.0);
         let tray_gap = px(10.0);
         let tray_slop = px(4.0);
+        let arrow = symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?;
+        let tray_start = if left_wing_start + arrow.width <= left_wing_max {
+            place(&layers, &arrow, left_wing_start)?;
+            self.zones.push((
+                left_wing_start - slop,
+                left_wing_start + arrow.width + slop,
+                Action::HiddenIcons,
+            ));
+            left_wing_start + arrow.width + tray_gap
+        } else {
+            left_wing_start
+        };
         let tray_spans = tray_item_spans(
-            left_wing_start,
+            tray_start,
             left_wing_max,
             tray_side,
             tray_gap,
@@ -674,7 +681,7 @@ impl MenuBar {
         }
         let left_wing_end = tray_spans
             .last()
-            .map_or(left_wing_start, |(_, icon_right)| *icon_right + tray_gap);
+            .map_or(tray_start, |(_, icon_right)| *icon_right + tray_gap);
 
         // The system monitor (issue #64), left of the status icons: two
         // small stacked columns, CPU over memory, then upload over download.

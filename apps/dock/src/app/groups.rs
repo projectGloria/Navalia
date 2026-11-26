@@ -22,7 +22,6 @@ use super::{
 impl App {
     /// Unfolds the group `id` beside its icon, away from the screen edge.
     pub(super) fn open_group_view(&mut self, id: &str) -> Result<()> {
-        self.close_preview();
         self.close_group_view();
         let Some(stage) = &self.stage else {
             return Ok(());

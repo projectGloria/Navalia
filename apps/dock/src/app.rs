@@ -24,7 +24,6 @@ mod input;
 mod lifecycle;
 mod menus;
 mod preferences;
-mod previews;
 mod rendering;
 mod visibility;
 
@@ -79,7 +78,6 @@ use crate::{
     mascot,
     menu::{self, MenuItem},
     menubar::MenuBar,
-    multi_window_view::MultiWindowView,
     scene::Scene,
     thumbnails::Thumbnails,
 };
@@ -94,9 +92,7 @@ pub use events::{
     menu_bar_finish_hide, menu_bar_media_changed, menu_bar_monitor_tick, menu_bar_pointer_moved,
     menu_bar_progress_tick, menu_bar_registry_changed, menu_bar_right_clicked, menu_bar_scrolled,
     menu_bar_tick, menu_bar_tray_changed, menu_bar_volume_flush, menu_bar_volume_press,
-    menu_bar_volume_release, multi_window_view_dismiss, multi_window_view_middle_click,
-    multi_window_view_press, multi_window_view_release, multi_window_view_scroll,
-    multi_window_view_tick,
+    menu_bar_volume_release,
 };
 pub(crate) use input::primary_button_down;
 pub use lifecycle::{request_quit, run};
@@ -204,14 +200,12 @@ fn millis(duration: std::time::Duration) -> u32 {
 /// The background update runs once a day: a single timer, aimed at the
 /// moment the next look is due (see `schedule_update`).
 const UPDATE_TIMER: usize = 12;
-const PREVIEW_TIMER: usize = 13;
 /// While the crab is out (a few seconds): is its act over, is the pointer on it.
 const MASCOT_TIMER: usize = 14;
 const MASCOT_POLL_MS: u32 = 50;
 const EDGE_TIMER: usize = 15;
 /// The charger act at most this often, however many times it is plugged.
 const CHARGING_AGAIN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-const PREVIEW_DWELL_MS: u32 = 420;
 const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 /// After the dock starts, the look waits this long, so it never slows signing in.
 const UPDATE_AFTER_START: std::time::Duration = std::time::Duration::from_secs(2 * 60);
@@ -427,37 +421,6 @@ pub(crate) struct MenuRequest {
     anchor: POINT,
     placement: menu::Placement,
     dark: bool,
-}
-
-/// Preview positions follow discovery order, independently of activation's
-/// z-order. Only open tracked windows are retained; a reopened window is new.
-#[derive(Default)]
-struct PreviewOrder(Vec<isize>);
-
-impl PreviewOrder {
-    fn update(&mut self, windows: &[TrackedWindow]) {
-        self.0
-            .retain(|hwnd| windows.iter().any(|window| window.hwnd == *hwnd));
-        // EnumWindows returns topmost first. Append a newly discovered batch
-        // back-to-front so its frontmost (usually newest) window goes last.
-        for window in windows.iter().rev() {
-            if !self.0.contains(&window.hwnd) {
-                self.0.push(window.hwnd);
-            }
-        }
-    }
-
-    fn windows_of(&self, windows: &[TrackedWindow], app: &str) -> Vec<isize> {
-        self.0
-            .iter()
-            .copied()
-            .filter(|hwnd| {
-                windows
-                    .iter()
-                    .any(|window| window.hwnd == *hwnd && window.app_id == app)
-            })
-            .collect()
-    }
 }
 
 enum MenuTarget {
@@ -678,7 +641,6 @@ pub(crate) struct App {
     roster: Roster,
     tracker: WindowTracker,
     windows: Vec<TrackedWindow>,
-    preview_order: PreviewOrder,
     /// Where each window was last seen on screen while not maximized, for
     /// the genie of snapped windows (see `tracker::rect_before_minimize`).
     last_rects: HashMap<isize, RECT>,
@@ -750,8 +712,6 @@ pub(crate) struct App {
     stage: Option<Stage>,
     hovering: bool,
     hovered: Option<usize>,
-    preview_candidate: Option<String>,
-    preview: Option<MultiWindowView>,
     /// A group's apps, unfolded above it after a click.
     group_view: Option<GroupView>,
     /// The group whose view a press on the dock closed: releasing on that

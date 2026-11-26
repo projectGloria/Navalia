@@ -95,12 +95,12 @@ pub(super) fn run_outside(outside: Outside) {
                 strings::text().keyboard_settings,
             ));
             let owner = main_window();
-            with_app("abrir selector de teclado", |app| {
+            with_app("open keyboard switcher", |app| {
                 app.menu_open = true;
                 Ok(())
             });
             let chosen = menu::show_below(&gfx, owner, &items, anchor, dark);
-            with_app("cerrar selector de teclado", App::after_menu);
+            with_app("close keyboard switcher", App::after_menu);
             if chosen == Some(SETTINGS) {
                 submit(ShellAction::Open {
                     id: "ms-settings:regionlanguage".into(),
@@ -124,7 +124,7 @@ pub(super) fn run_outside(outside: Outside) {
                 .name("navalia-end-task".into())
                 .spawn(move || {
                     if let Err(error) = target.terminate() {
-                        navalia_shell::log::line(&format!("finalizar tarea: {error}"));
+                        navalia_shell::log::line(&format!("end task: {error}"));
                         shell_work::notify_end_task_failed();
                     }
                 });
@@ -183,7 +183,6 @@ impl App {
             .stage
             .as_ref()
             .map_or(menu::Placement::Above, Stage::menu_placement);
-        self.close_preview();
         self.close_group_view();
         self.hovered = None;
         self.hovering = false;
@@ -214,7 +213,6 @@ impl App {
     /// Middle click on an app opens another window of it, as on the Windows
     /// taskbar.
     pub(super) fn on_middle_click(&mut self) -> Result<Option<Outside>> {
-        self.close_preview();
         self.close_group_view();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
@@ -243,7 +241,6 @@ impl App {
         if self.menu_open {
             return Ok(None);
         }
-        self.close_preview();
         self.close_group_view();
         if self.pointer_at_click()?.is_none() {
             return Ok(None);
