@@ -147,6 +147,9 @@ impl App {
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
             smart_hide: self.config.smart_hide,
+            taskbar_style: self.config.taskbar_style,
+            taskbar_color: self.config.taskbar_rgb(),
+            has_menubar: self.menubar.is_some(),
             icon_size: self.config.icon_size,
             density: self.config.dock_density,
             max_scale: self.config.max_scale(),
@@ -297,7 +300,46 @@ impl App {
             px(LABEL_ROOM)
         };
         let (room_x, room_top) = (room + side_growth, rise + label_room);
-        let window_zone = zone(room_x, room_top, room_x, room);
+        let mut window_zone = zone(room_x, room_top, room_x, room);
+        let docked_bottom =
+            !self.config.hides_automatically() && edge == DockEdge::Bottom && !self.fullscreen;
+        let backdrop = if docked_bottom {
+            crate::menubar::TaskbarBackdrop {
+                style: self.config.taskbar_style,
+                color: self.config.taskbar_rgb(),
+                height: strip,
+                below_hwnd: self.visual.0 as isize,
+            }
+        } else {
+            crate::menubar::TaskbarBackdrop::default()
+        };
+        let scene_theme = if backdrop.style != navalia_config::TaskbarStyle::Clear
+            && let Some(rgb) = backdrop.color
+        {
+            Theme::new(crate::appearance::Look {
+                light: crate::scene::is_light_rgb(rgb),
+                ..key.look
+            })
+        } else {
+            theme
+        };
+        let fallback_backdrop = if self.menubar.is_none()
+            && backdrop.style != navalia_config::TaskbarStyle::Clear
+            && backdrop.height > 0
+        {
+            window_zone.left = screen.left;
+            window_zone.right = screen.right;
+            window_zone.bottom = screen.bottom;
+            Some(crate::scene::SceneTaskbarBackdrop {
+                style: backdrop.style,
+                color: backdrop.color,
+                width: (screen.right - screen.left) as f32,
+                height: strip as f32,
+                y: (screen.bottom - strip - window_zone.top) as f32,
+            })
+        } else {
+            None
+        };
         let window_frame = DockFrame::new(
             edge,
             (
@@ -331,10 +373,11 @@ impl App {
             &SceneInput {
                 layout: &dock,
                 contents: &contents,
-                theme,
+                theme: scene_theme,
                 scale,
                 frame: window_frame,
                 remove_label: self.remove_label.as_ref(),
+                taskbar_backdrop: fallback_backdrop,
             },
         )?;
         let reorder = self.stage.as_ref().and_then(|previous| {
@@ -457,6 +500,12 @@ impl App {
         self.update_smart_hiding()?;
         self.sync_badge_visuals()?;
         self.place_windows()?;
+        if let Some(bar) = &mut self.menubar
+            && let Err(error) = bar.set_taskbar_backdrop(&self.gfx, backdrop)
+        {
+            crate::recovery::graphics_error(&error);
+            navalia_shell::log::line(&format!("fondo de la barra inferior: {error:#}"));
+        }
         self.schedule_trim();
         self.render()?;
         // Last: reserving space is a synchronous call to Explorer (40-60 ms

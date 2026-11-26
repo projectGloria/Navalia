@@ -8,7 +8,7 @@ import {
   type DockPosition,
   type DockDensity,
   type DockAutoHideSpeed,
-  type DockHidingMode,
+  type TaskbarStyle,
   type GenieSpeed,
   type MascotCharacter,
   type IslandStyle,
@@ -268,6 +268,8 @@ export function App() {
       .catch(() => setFailed(true));
   };
   const ownMenuBarTheme = config.menuBarAppearance != null;
+  const autoHideOn = config.autoHide || (config.smartHide ?? false);
+  const taskbarStyle: TaskbarStyle = config.taskbarStyle ?? "clear";
   const themeChoices = THEMES.map((theme) => ({
     value: theme,
     label: themeName(t, theme),
@@ -452,19 +454,14 @@ export function App() {
                 </SubRow>
               </Card>
               <Card title={t.groupBehavior}>
-                <Row label={t.dockHidingMode} hint={config.autoHide ? t.dockHidingAutomaticHint : config.smartHide ? t.dockHidingIntelligentHint : t.dockHidingVisibleHint}>
-                  <Select<DockHidingMode>
-                    label={t.dockHidingMode}
-                    value={config.autoHide ? "automatic" : config.smartHide ? "intelligent" : "visible"}
-                    options={[
-                      { value: "visible", label: t.dockHidingVisible },
-                      { value: "automatic", label: t.dockHidingAutomatic },
-                      { value: "intelligent", label: t.dockHidingIntelligent },
-                    ]}
-                    onChange={(mode) => update({ autoHide: mode === "automatic", smartHide: mode === "intelligent" })}
+                <Row label={t.taskbarAutoHide} hint={autoHideOn ? t.taskbarAutoHideOnHint : t.taskbarAutoHideOffHint}>
+                  <Toggle
+                    label={t.taskbarAutoHide}
+                    checked={autoHideOn}
+                    onChange={(enabled) => update({ autoHide: enabled, smartHide: false, menuBarAutoHide: enabled, menuBarSmartHide: false })}
                   />
                 </Row>
-                <SubRow label={t.dockAutoHideSpeed} open={config.autoHide || (config.smartHide ?? false)}>
+                <SubRow label={t.dockAutoHideSpeed} open={autoHideOn}>
                   <Segmented<DockAutoHideSpeed>
                     label={t.dockAutoHideSpeed}
                     value={config.dockAutoHideSpeed ?? "normal"}
@@ -475,6 +472,49 @@ export function App() {
                     ]}
                     onChange={(dockAutoHideSpeed) => update({ dockAutoHideSpeed })}
                   />
+                </SubRow>
+                <SubRow label={t.taskbarStyle} open={!autoHideOn}>
+                  <Segmented<TaskbarStyle>
+                    label={t.taskbarStyle}
+                    value={taskbarStyle}
+                    options={[
+                      { value: "clear", label: t.taskbarStyleClear },
+                      { value: "frosted", label: t.taskbarStyleFrosted },
+                      { value: "opaque", label: t.taskbarStyleOpaque },
+                    ]}
+                    onChange={(nextStyle) => update({ taskbarStyle: nextStyle })}
+                  />
+                </SubRow>
+                <SubRow label={t.taskbarColor} hint={t.taskbarColorHint} open={!autoHideOn && taskbarStyle !== "clear"}>
+                  <div className="color-swatches" role="group" aria-label={t.taskbarColor}>
+                    <button
+                      type="button"
+                      className="color-swatch color-swatch-auto"
+                      aria-pressed={config.taskbarColor == null}
+                      onClick={() => update({ taskbarColor: null })}
+                    >
+                      {t.taskbarColorAuto}
+                    </button>
+                    {TASKBAR_SWATCHES.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        className="color-swatch"
+                        style={{ backgroundColor: hex }}
+                        aria-label={hex}
+                        aria-pressed={config.taskbarColor?.toLowerCase() === hex}
+                        onClick={() => update({ taskbarColor: hex })}
+                      />
+                    ))}
+                    <label className="color-swatch color-swatch-custom" title={t.taskbarColorCustom}>
+                      <input
+                        type="color"
+                        aria-label={t.taskbarColorCustom}
+                        value={config.taskbarColor ?? "#18181b"}
+                        onChange={(event) => update({ taskbarColor: event.target.value })}
+                      />
+                    </label>
+                  </div>
                 </SubRow>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
@@ -621,22 +661,6 @@ export function App() {
                     onChange={(menuBar) => update({ menuBar })}
                   />
                 </Row>
-                <SubRow
-                  label={t.menuBarHidingMode}
-                  hint={config.menuBarAutoHide ? t.menuBarAutoHideHint : config.menuBarSmartHide ? t.menuBarHidingIntelligentHint : t.menuBarHidingVisibleHint}
-                  open={config.menuBar}
-                >
-                  <Select<DockHidingMode>
-                    label={t.menuBarHidingMode}
-                    value={config.menuBarAutoHide ? "automatic" : config.menuBarSmartHide ? "intelligent" : "visible"}
-                    options={[
-                      { value: "visible", label: t.dockHidingVisible },
-                      { value: "automatic", label: t.dockHidingAutomatic },
-                      { value: "intelligent", label: t.dockHidingIntelligent },
-                    ]}
-                    onChange={(mode) => update({ menuBarAutoHide: mode === "automatic", menuBarSmartHide: mode === "intelligent" })}
-                  />
-                </SubRow>
                 <SubRow label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
                   <Toggle
                     label={t.menuBarMusic}
@@ -796,6 +820,17 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
 }
 
 const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "system"];
+
+const TASKBAR_SWATCHES: readonly string[] = [
+  "#18181b",
+  "#1e293b",
+  "#0f172a",
+  "#14281d",
+  "#2a1830",
+  "#3b1d2a",
+  "#e5e7eb",
+  "#f4efe6",
+];
 
 const THEMES: readonly Appearance[] = ["auto", "light", "dark", "frosted", "clear", "liquidGlass"];
 

@@ -66,6 +66,10 @@ pub struct Config {
     pub dock_position: DockPosition,
     pub dock_density: DockDensity,
     pub dock_auto_hide_speed: DockAutoHideSpeed,
+    /// Visual style of the full-width bottom taskbar when auto-hide is off.
+    pub taskbar_style: TaskbarStyle,
+    /// Optional `#rrggbb` tint/fill color for `Frosted` and `Opaque` taskbar styles.
+    pub taskbar_color: Option<String>,
     pub show_start: bool,
     pub show_trash: bool,
     pub show_downloads: bool,
@@ -314,6 +318,31 @@ pub enum Appearance {
     Auto,
 }
 
+/// Visual style of the full-width bottom taskbar when auto-hide is turned off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskbarStyle {
+    Frosted,
+    Opaque,
+    #[default]
+    #[serde(other)]
+    Clear,
+}
+
+/// Parses a `#RRGGBB` hex color string (case-insensitive) into RGB bytes.
+#[must_use]
+pub fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
+    let trimmed = value.trim();
+    let hex = trimmed.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
 pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
 pub const MAX_MAGNIFIED_SIZE: u32 = 160;
 
@@ -323,6 +352,12 @@ impl Config {
         self.auto_hide || self.smart_hide
     }
 
+    /// Parsed RGB color for the full-width taskbar, if a valid custom color is set.
+    #[must_use]
+    pub fn taskbar_rgb(&self) -> Option<(u8, u8, u8)> {
+        self.taskbar_color.as_deref().and_then(parse_hex_color)
+    }
+
     /// Brings out-of-range values (a hand-edited file) back into range.
     #[must_use]
     pub fn sanitized(mut self) -> Self {
@@ -330,6 +365,11 @@ impl Config {
         self.magnified_size = self
             .magnified_size
             .clamp(self.icon_size, MAX_MAGNIFIED_SIZE);
+        self.taskbar_color = self
+            .taskbar_color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .map(|(r, g, b)| format!("#{r:02x}{g:02x}{b:02x}"));
         self.shortcuts_folder = self
             .shortcuts_folder
             .map(|folder| folder.trim().to_owned())
@@ -367,6 +407,8 @@ impl Default for Config {
             dock_position: DockPosition::Bottom,
             dock_density: DockDensity::Normal,
             dock_auto_hide_speed: DockAutoHideSpeed::Normal,
+            taskbar_style: TaskbarStyle::Clear,
+            taskbar_color: None,
             show_start: true,
             show_trash: true,
             show_downloads: true,
@@ -1150,5 +1192,69 @@ mod tests {
         fs::write(&path, r#"{"version":1,"pinned":["a"],"auto_hide":true}"#).ok();
         let loaded = load(&path).ok().flatten();
         assert_eq!(loaded.map(|config| config.auto_hide), Some(true));
+    }
+
+    #[test]
+    fn taskbar_style_defaults_to_clear_and_round_trips() -> Result<(), serde_json::Error> {
+        let fresh = Config::default();
+        assert_eq!(fresh.taskbar_style, TaskbarStyle::Clear);
+        assert_eq!(fresh.taskbar_color, None);
+        for (raw, expected) in [
+            ("clear", TaskbarStyle::Clear),
+            ("frosted", TaskbarStyle::Frosted),
+            ("opaque", TaskbarStyle::Opaque),
+            ("unknown", TaskbarStyle::Clear),
+        ] {
+            let parsed: Config = serde_json::from_str(&format!(r#"{{"taskbarStyle":"{raw}"}}"#))?;
+            assert_eq!(parsed.taskbar_style, expected);
+        }
+        let round_trip: Config = serde_json::from_str(&serde_json::to_string(&Config {
+            taskbar_style: TaskbarStyle::Opaque,
+            taskbar_color: Some("#1e293b".into()),
+            ..Config::default()
+        })?)?;
+        assert_eq!(round_trip.taskbar_style, TaskbarStyle::Opaque);
+        assert_eq!(round_trip.taskbar_color.as_deref(), Some("#1e293b"));
+        Ok(())
+    }
+
+    #[test]
+    fn taskbar_color_sanitizes_and_parses_rgb() {
+        assert_eq!(parse_hex_color(" #1A2b3C "), Some((0x1a, 0x2b, 0x3c)));
+        assert_eq!(parse_hex_color("#123"), None);
+        assert_eq!(parse_hex_color("123456"), None);
+        assert_eq!(parse_hex_color("#zzzzzz"), None);
+
+        let valid = Config {
+            taskbar_color: Some(" #ABCDEF ".into()),
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(valid.taskbar_color.as_deref(), Some("#abcdef"));
+        assert_eq!(valid.taskbar_rgb(), Some((0xab, 0xcd, 0xef)));
+
+        let invalid = Config {
+            taskbar_color: Some("not-a-color".into()),
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(invalid.taskbar_color, None);
+        assert_eq!(invalid.taskbar_rgb(), None);
+    }
+
+    #[test]
+    fn settings_patch_updates_taskbar_style_and_color() -> Result<(), ConfigError> {
+        let path = scratch("taskbar-style-patch");
+        save(&path, &Config::default())?;
+        let saved = update_preferences(
+            &path,
+            serde_json::Map::from_iter([
+                ("taskbarStyle".into(), serde_json::json!("frosted")),
+                ("taskbarColor".into(), serde_json::json!(" #0F172A ")),
+            ]),
+        )?;
+        assert_eq!(saved.taskbar_style, TaskbarStyle::Frosted);
+        assert_eq!(saved.taskbar_color.as_deref(), Some("#0f172a"));
+        Ok(())
     }
 }

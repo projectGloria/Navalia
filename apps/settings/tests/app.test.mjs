@@ -29,7 +29,8 @@ const base = {
   language: "en", menuBar: true, smartHide: false,
   iconSize: 48, magnifiedSize: 77,
   magnification: true, dockPosition: "bottom", genie: true, genieSpeed: "normal",
-  dockDensity: "normal", dockAutoHideSpeed: "normal", showStart: true,
+  dockDensity: "normal", dockAutoHideSpeed: "normal",
+  taskbarStyle: "clear", taskbarColor: null, showStart: true,
   showTrash: true, pinExplorer: true,
   showDownloads: true,
   showOtherWorkspaces: false,
@@ -303,36 +304,63 @@ test("other workspaces are opt-in and save without changing other window prefere
   } finally { unmount(); }
 });
 
-test("one native dropdown preserves legacy modes and saves exclusive choices atomically", async () => {
-  const modes = [
-    [false, false, "visible"], [true, false, "automatic"],
-    [false, true, "intelligent"], [true, true, "automatic"],
-  ];
-  for (const language of Object.keys(texts)) for (const [autoHide, smartHide, selected] of modes) {
-    const view = fixture("dock", { language, autoHide, smartHide });
-    const unmount = await view.mount();
-    const selector = () => [...elements(view.body())].find((node) =>
-      node.props.label === texts[language].dockHidingMode && "value" in node.props);
-    try {
-      assert.equal(selector().props.value, selected);
-      assert.deepEqual(selector().props.options.map((option) => option.value), ["visible", "automatic", "intelligent"]);
-      assert.deepEqual(view.calls, [], "opening Settings must not normalize saved preferences");
-      const controls = [...elements(view.body())];
-      assert.ok(!controls.some((node) => node.props.label === texts[language].dockHidingMode && "checked" in node.props));
-      for (const mode of ["intelligent", "automatic", "visible"]) {
-        view.change(texts[language].dockHidingMode, mode);
-        view.fire(60);
-        await settle();
-        assert.equal(selector().props.value, mode);
-        assert.deepEqual(view.calls.at(-1), { autoHide: mode === "automatic", smartHide: mode === "intelligent" });
-        const html = renderToStaticMarkup(view.body());
-        assert.ok(html.includes('<select class="select-control"'));
-        const selectedOption = html.match(new RegExp(`<option[^>]*value="${mode}"[^>]*>`));
-        assert.ok(selectedOption?.[0].includes('selected=""'));
-        assert.ok(!html.includes('preview-hiding'));
-      }
-    } finally { unmount(); }
+test("unified taskbar auto-hide toggle controls dock and status bar and reveals style/color when off", async () => {
+  for (const language of Object.keys(texts)) {
+    const viewOn = fixture("dock", { language, autoHide: true, smartHide: false });
+    const toggleOn = [...elements(viewOn.body())].find((node) =>
+      node.props.label === texts[language].taskbarAutoHide && "checked" in node.props);
+    assert.equal(toggleOn.props.checked, true);
+    const styleSubOn = [...elements(viewOn.body())].find((node) =>
+      node.props.label === texts[language].taskbarStyle && "open" in node.props);
+    assert.equal(styleSubOn.props.open, false);
+
+    const viewOff = fixture("dock", { language, autoHide: false, smartHide: false, taskbarStyle: "frosted" });
+    const toggleOff = [...elements(viewOff.body())].find((node) =>
+      node.props.label === texts[language].taskbarAutoHide && "checked" in node.props);
+    assert.equal(toggleOff.props.checked, false);
+    const styleSubOff = [...elements(viewOff.body())].find((node) =>
+      node.props.label === texts[language].taskbarStyle && "open" in node.props);
+    const colorSubOff = [...elements(viewOff.body())].find((node) =>
+      node.props.label === texts[language].taskbarColor && "open" in node.props);
+    assert.equal(styleSubOff.props.open, true);
+    assert.equal(colorSubOff.props.open, true);
   }
+
+  const view = fixture("dock", { autoHide: true, smartHide: false, taskbarStyle: "clear", taskbarColor: null });
+  const unmount = await view.mount();
+  try {
+    view.change(texts.en.taskbarAutoHide, false);
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls.at(-1), {
+      autoHide: false,
+      smartHide: false,
+      menuBarAutoHide: false,
+      menuBarSmartHide: false,
+    });
+
+    view.change(texts.en.taskbarStyle, "opaque");
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls.at(-1), { taskbarStyle: "opaque" });
+
+    const swatch = [...elements(view.body())].find((node) =>
+      node.type === "button" && node.props["aria-label"] === "#1e293b");
+    swatch.props.onClick();
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls.at(-1), { taskbarColor: "#1e293b" });
+
+    view.change(texts.en.taskbarAutoHide, true);
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls.at(-1), {
+      autoHide: true,
+      smartHide: false,
+      menuBarAutoHide: true,
+      menuBarSmartHide: false,
+    });
+  } finally { unmount(); }
 });
 
 test("reset selects the new intelligent default without changing pinned apps", async () => {
@@ -378,19 +406,11 @@ test("the mascot is Claude's crab unless the cat is chosen, and only while it is
   } finally { unmount(); }
 });
 
-test("menu bar visibility is one choice of three, like the dock's", async () => {
+test("menubar section no longer renders a separate visibility dropdown", () => {
   const view = fixture("menubar");
-  const unmount = await view.mount();
-  try {
-    const select = [...elements(view.body())].find((node) =>
-      node.props.label === texts.en.menuBarHidingMode && "value" in node.props);
-    assert.equal(select.props.value, "visible");
-    view.change(texts.en.menuBarHidingMode, "intelligent");
-    view.change(texts.en.menuBarHidingMode, "automatic");
-    view.fire(60);
-    await settle();
-    assert.deepEqual(view.calls, [{ menuBarAutoHide: true, menuBarSmartHide: false }]);
-  } finally { unmount(); }
+  const select = [...elements(view.body())].find((node) =>
+    node.props.label === texts.en.menuBarHidingMode && "value" in node.props);
+  assert.equal(select, undefined);
 });
 
 test("failed writes remain retryable and prevent closing until saved", async () => {

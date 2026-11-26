@@ -297,7 +297,7 @@ pub fn running_processes(ids: &[String]) -> Vec<String> {
                 && let Some(image) = process_image(entry.th32ProcessID)
             {
                 let norm = normalize_id(&image);
-                if candidates.iter().any(|candidate| *candidate == norm) && !found.contains(&norm) {
+                if candidates.contains(&norm) && !found.contains(&norm) {
                     found.push(norm);
                 }
             }

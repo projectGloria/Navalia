@@ -245,6 +245,15 @@ struct Status {
     battery_percentage: bool,
 }
 
+/// Full-width taskbar backdrop configuration when auto-hide is off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskbarBackdrop {
+    pub style: navalia_config::TaskbarStyle,
+    pub color: Option<(u8, u8, u8)>,
+    pub height: i32,
+    pub below_hwnd: isize,
+}
+
 /// What the bar was last drawn for.
 #[derive(Clone, PartialEq)]
 struct Look {
@@ -256,6 +265,7 @@ struct Look {
     scale: f32,
     /// Horizontal screen X range reserved for the centered bottom dock (`------- XXX ----------`).
     dock_cutout: Option<(i32, i32)>,
+    taskbar_backdrop: TaskbarBackdrop,
     /// The theme's material; `light` and `glass` are its other two halves
     /// (see `appearance::Look`).
     material: Material,
@@ -546,6 +556,7 @@ pub struct MenuBar {
     bounds: RECT,
     /// Horizontal screen X range occupied by the bottom dock (`------- XXX ----------`).
     dock_cutout: Option<(i32, i32)>,
+    taskbar_backdrop: TaskbarBackdrop,
     status: Status,
     widgets: MenuBarWidgets,
     /// What the clock opens (`Config::menu_bar_clock_target`). Not drawn, so
@@ -1244,6 +1255,7 @@ impl MenuBar {
             exit_animation: None,
             bounds: RECT::default(),
             dock_cutout: None,
+            taskbar_backdrop: TaskbarBackdrop::default(),
             status: Status {
                 bluetooth_on: false,
                 network: Network::Offline,
@@ -1366,6 +1378,14 @@ impl MenuBar {
             return Ok(());
         }
         self.dock_cutout = cutout;
+        self.refresh(gfx)
+    }
+
+    pub fn set_taskbar_backdrop(&mut self, gfx: &Gfx, backdrop: TaskbarBackdrop) -> Result<()> {
+        if self.taskbar_backdrop == backdrop {
+            return Ok(());
+        }
+        self.taskbar_backdrop = backdrop;
         self.refresh(gfx)
     }
 
@@ -1830,11 +1850,16 @@ impl MenuBar {
             SWP_HIDEWINDOW
         };
         let window_top = bounds.bottom - self.visual_height;
+        let z_after = if self.taskbar_backdrop.below_hwnd != 0 {
+            HWND(self.taskbar_backdrop.below_hwnd as *mut _)
+        } else {
+            HWND_TOPMOST
+        };
         // SAFETY: Our own live window.
         unsafe {
             SetWindowPos(
                 self.hwnd,
-                Some(HWND_TOPMOST),
+                Some(z_after),
                 bounds.left,
                 window_top,
                 bounds.right - bounds.left,
@@ -2192,6 +2217,7 @@ impl MenuBar {
             screen: monitor.screen,
             scale: monitor.scale,
             dock_cutout: self.dock_cutout,
+            taskbar_backdrop: self.taskbar_backdrop,
             material: appearance.material,
             light: appearance.light,
             glass: appearance.glass,
@@ -2453,7 +2479,13 @@ impl MenuBar {
         let scale = look.scale;
         let px = |logical: f32| (logical * scale).round();
         let screen = look.screen;
-        let (width, height) = ((screen.right - screen.left) as f32, px(HEIGHT));
+        let has_backdrop = look.taskbar_backdrop.style != navalia_config::TaskbarStyle::Clear;
+        let bar_h = if has_backdrop && look.taskbar_backdrop.height > 0 {
+            (look.taskbar_backdrop.height as f32).max(px(HEIGHT))
+        } else {
+            px(HEIGHT)
+        };
+        let (width, height) = ((screen.right - screen.left) as f32, bar_h);
         let panel_h = px(look.panel_height());
         let visual_height = if look.panel.is_some() {
             px(PANEL_SHADOW_MARGIN) + panel_h + px(PANEL_GAP) + height
@@ -2470,7 +2502,18 @@ impl MenuBar {
             let right = ((r - screen.left) as f32).clamp(left, width);
             (right > left).then_some((left, right))
         });
-        let ink = if look.light { Ink::Dark } else { Ink::Light };
+        let effective_light = if has_backdrop {
+            look.taskbar_backdrop
+                .color
+                .map_or(look.light, crate::scene::is_light_rgb)
+        } else {
+            look.light
+        };
+        let ink = if effective_light {
+            Ink::Dark
+        } else {
+            Ink::Light
+        };
 
         let root = c.CreateContainerVisual()?;
         root.SetSize(Vector2 {
@@ -2478,6 +2521,22 @@ impl MenuBar {
             Y: visual_height,
         })?;
         let layers = root.Children()?;
+
+        if has_backdrop
+            && let Some(backdrop) = crate::scene::taskbar_bar_visual(
+                gfx,
+                width,
+                height,
+                bar_y,
+                look.taskbar_backdrop.style,
+                look.taskbar_backdrop.color,
+                look.light,
+                look.glass,
+                scale,
+            )?
+        {
+            layers.InsertAtTop(&backdrop)?;
+        }
 
         let place = |layers: &windows::UI::Composition::VisualCollection,
                      item: &LabelBrush,

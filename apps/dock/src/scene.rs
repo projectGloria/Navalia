@@ -342,6 +342,114 @@ const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
     }
 }
 
+/// Relative luminance check for choosing dark vs light foreground ink on a custom color.
+#[must_use]
+pub(crate) fn is_light_rgb((r, g, b): (u8, u8, u8)) -> bool {
+    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b) > 140.0
+}
+
+/// Resolves `(fill_color, top_border_color, effective_light)` for the full-width taskbar.
+/// Returns `None` for `TaskbarStyle::Clear`.
+#[must_use]
+pub(crate) fn resolve_taskbar_colors(
+    style: navalia_config::TaskbarStyle,
+    color: Option<(u8, u8, u8)>,
+    light_theme: bool,
+    glass: bool,
+) -> Option<(Color, Color, bool)> {
+    use navalia_config::TaskbarStyle;
+    let effective_light = color.map_or(light_theme, is_light_rgb);
+    match style {
+        TaskbarStyle::Clear => None,
+        TaskbarStyle::Frosted => {
+            let fill = match color {
+                Some((r, g, b)) => rgba(r, g, b, if glass { 155 } else { 245 }),
+                None if effective_light => {
+                    if glass {
+                        rgba(246, 248, 252, 168)
+                    } else {
+                        rgba(238, 240, 244, 255)
+                    }
+                }
+                None => {
+                    if glass {
+                        rgba(24, 28, 36, 168)
+                    } else {
+                        rgba(34, 38, 46, 255)
+                    }
+                }
+            };
+            let border = if effective_light {
+                rgba(0, 0, 0, 22)
+            } else {
+                rgba(255, 255, 255, 42)
+            };
+            Some((fill, border, effective_light))
+        }
+        TaskbarStyle::Opaque => {
+            let fill = match color {
+                Some((r, g, b)) => rgba(r, g, b, 255),
+                None if effective_light => rgba(242, 243, 247, 255),
+                None => rgba(24, 24, 28, 255),
+            };
+            let border = if effective_light {
+                rgba(0, 0, 0, 24)
+            } else {
+                rgba(255, 255, 255, 28)
+            };
+            Some((fill, border, effective_light))
+        }
+    }
+}
+
+/// Builds the full-width bottom taskbar background visual (Frosted or Opaque).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn taskbar_bar_visual(
+    gfx: &Gfx,
+    width: f32,
+    height: f32,
+    y: f32,
+    style: navalia_config::TaskbarStyle,
+    color: Option<(u8, u8, u8)>,
+    light_theme: bool,
+    glass: bool,
+    scale: f32,
+) -> Result<Option<ContainerVisual>> {
+    if width <= 0.0 || height <= 0.0 {
+        return Ok(None);
+    }
+    let Some((fill_color, border_color, _)) =
+        resolve_taskbar_colors(style, color, light_theme, glass)
+    else {
+        return Ok(None);
+    };
+    let c = &gfx.compositor;
+    let container = c.CreateContainerVisual()?;
+    container.SetSize(v2(width, height))?;
+    container.SetOffset(v3(0.0, y))?;
+    let children = container.Children()?;
+
+    if style == navalia_config::TaskbarStyle::Frosted && glass {
+        let backdrop = c.CreateSpriteVisual()?;
+        backdrop.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
+        backdrop.SetBrush(&c.CreateHostBackdropBrush()?)?;
+        children.InsertAtTop(&backdrop)?;
+    }
+
+    let tint = c.CreateSpriteVisual()?;
+    tint.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
+    tint.SetBrush(&c.CreateColorBrushWithColor(fill_color)?)?;
+    children.InsertAtTop(&tint)?;
+
+    let border = c.CreateSpriteVisual()?;
+    border.SetSize(v2(width, scale.max(1.0)))?;
+    border.SetOffset(v3(0.0, 0.0))?;
+    border.SetBrush(&c.CreateColorBrushWithColor(border_color)?)?;
+    children.InsertAtTop(&border)?;
+
+    Ok(Some(container))
+}
+
 fn v2(x: f32, y: f32) -> Vector2 {
     Vector2 { X: x, Y: y }
 }
@@ -368,6 +476,16 @@ pub struct SlotContent<'a> {
     pub badge: Option<&'a CompositionSurfaceBrush>,
 }
 
+/// Fallback full-width taskbar background when the bottom status bar is off.
+#[derive(Clone, Copy)]
+pub struct SceneTaskbarBackdrop {
+    pub style: navalia_config::TaskbarStyle,
+    pub color: Option<(u8, u8, u8)>,
+    pub width: f32,
+    pub height: f32,
+    pub y: f32,
+}
+
 pub struct SceneInput<'a> {
     pub layout: &'a Layout,
     pub contents: &'a [SlotContent<'a>],
@@ -378,6 +496,8 @@ pub struct SceneInput<'a> {
     pub frame: DockFrame,
     /// Shown above an icon dragged out of the dock.
     pub remove_label: Option<&'a LabelBrush>,
+    /// Fallback full-width taskbar background when the bottom status bar is off.
+    pub taskbar_backdrop: Option<SceneTaskbarBackdrop>,
 }
 
 /// App badge on a minimized-window thumbnail: side relative to the slot, and
@@ -534,6 +654,7 @@ mod attention_tests {
                 scale,
                 frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
                 remove_label: None,
+                taskbar_backdrop: None,
             },
         )?;
         let root = scene.root.clone();
@@ -622,6 +743,7 @@ mod attention_tests {
                         scale,
                         frame: DockFrame::new(DockEdge::Bottom, (0.0, 0.0), layout.height),
                         remove_label: None,
+                        taskbar_backdrop: None,
                     },
                 )?;
                 let root = scene.root.clone();
@@ -669,6 +791,31 @@ mod attention_tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn taskbar_backdrop_contrast_and_colors() {
+        use navalia_config::TaskbarStyle;
+
+        assert!(!is_light_rgb((24, 24, 28)));
+        assert!(is_light_rgb((240, 242, 245)));
+
+        assert_eq!(
+            resolve_taskbar_colors(TaskbarStyle::Clear, None, false, true),
+            None
+        );
+
+        let (frosted_fill, _, frosted_light) =
+            resolve_taskbar_colors(TaskbarStyle::Frosted, Some((240, 240, 245)), false, true)
+                .unwrap_or_default();
+        assert!(frosted_light);
+        assert_eq!(frosted_fill.A, 155);
+
+        let (opaque_fill, _, opaque_light) =
+            resolve_taskbar_colors(TaskbarStyle::Opaque, Some((20, 30, 40)), true, true)
+                .unwrap_or_default();
+        assert!(!opaque_light);
+        assert_eq!(opaque_fill, rgba(20, 30, 40, 255));
     }
 }
 
@@ -779,6 +926,22 @@ impl Scene {
         let root = c.CreateContainerVisual()?;
         root.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
         let layers = root.Children()?;
+
+        if let Some(tb) = input.taskbar_backdrop
+            && let Some(backdrop) = taskbar_bar_visual(
+                gfx,
+                tb.width,
+                tb.height,
+                tb.y,
+                tb.style,
+                tb.color,
+                theme.light,
+                theme.glass,
+                scale,
+            )?
+        {
+            layers.InsertAtTop(&backdrop)?;
+        }
 
         // Children are placed in window coordinates through `frame`.
         let content = c.CreateContainerVisual()?;

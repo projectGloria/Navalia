@@ -119,8 +119,11 @@ pub(super) fn save_dock_config(
         saved.recent = roster.recent().to_vec();
         saved.taskbar_pins.clone_from(&config.taskbar_pins);
         if toggle_hide {
-            saved.auto_hide = !saved.hides_automatically();
+            let enable = !saved.hides_automatically();
+            saved.auto_hide = enable;
             saved.smart_hide = false;
+            saved.menu_bar_auto_hide = enable;
+            saved.menu_bar_smart_hide = false;
         }
         Ok(saved)
     })?;
@@ -303,7 +306,9 @@ impl App {
         )?;
         self.config.auto_hide = saved.auto_hide;
         self.config.smart_hide = saved.smart_hide;
-        self.apply_edge_settings();
+        self.config.menu_bar_auto_hide = saved.menu_bar_auto_hide;
+        self.config.menu_bar_smart_hide = saved.menu_bar_smart_hide;
+        self.apply_menu_bar_setting();
         self.refresh()?;
         self.hide_if_unused()?;
         self.update_fullscreen()
@@ -408,9 +413,15 @@ mod dock_preferences_tests {
             navalia_config::save(&path, &config)?;
             let snapshot = Config::default(); // The latest saved choice wins over a stale view.
             let saved = save_dock_config(&path, &Roster::default(), &snapshot, true)?;
+            let expected_hide = !(auto_hide || smart_hide);
             assert_eq!(
-                (saved.auto_hide, saved.smart_hide),
-                (!(auto_hide || smart_hide), false)
+                (
+                    saved.auto_hide,
+                    saved.smart_hide,
+                    saved.menu_bar_auto_hide,
+                    saved.menu_bar_smart_hide
+                ),
+                (expected_hide, false, expected_hide, false)
             );
             assert_eq!(saved.icon_size, 64);
             let untouched = save_dock_config(&path, &Roster::default(), &snapshot, false)?;

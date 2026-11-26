@@ -7,8 +7,7 @@ export type MascotCharacter = "crab" | "cat" | "fox" | "capybara" | "mochi" | "g
 export type DockPosition = "left" | "bottom" | "right";
 export type DockDensity = "compact" | "normal" | "spacious";
 export type DockAutoHideSpeed = "smooth" | "normal" | "fast";
-/** View of the existing two settings; saved atomically as a mutually exclusive pair. */
-export type DockHidingMode = "visible" | "automatic" | "intelligent";
+export type TaskbarStyle = "clear" | "frosted" | "opaque";
 /** `auto` follows Windows' light or dark mode. */
 export type Appearance = "auto" | "light" | "dark" | "frosted" | "clear" | "liquidGlass";
 
@@ -25,6 +24,8 @@ export interface Config {
   dockPosition: DockPosition;
   dockDensity: DockDensity;
   dockAutoHideSpeed: DockAutoHideSpeed;
+  taskbarStyle?: TaskbarStyle;
+  taskbarColor?: string | null;
   showStart: boolean;
   showTrash: boolean;
   showDownloads: boolean;
