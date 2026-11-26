@@ -20,12 +20,13 @@ use windows::{
             },
             Shell::{SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
-                ASFW_ANY, AllowSetForegroundWindow, FindWindowW, GWL_EXSTYLE, GetForegroundWindow,
-                GetShellWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-                IsWindow, IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
-                SW_SHOWNORMAL, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
-                SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowPos,
-                ShowWindowAsync, SwitchToThisWindow, WM_CLOSE, WM_NULL, WS_EX_TOPMOST,
+                ASFW_ANY, AllowSetForegroundWindow, FindWindowW, GWL_EXSTYLE, GetClassNameW,
+                GetForegroundWindow, GetShellWindow, GetWindowLongW, GetWindowRect,
+                GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+                SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, SWP_ASYNCWINDOWPOS,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+                SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, ShowWindowAsync,
+                SwitchToThisWindow, WM_CLOSE, WM_NULL, WS_EX_TOPMOST,
             },
         },
     },
@@ -206,18 +207,96 @@ pub fn open_start_menu() {
     tap(&[VK_LWIN]);
 }
 
-/// Opens the Windows 11 quick settings panel (network, volume, battery): Win+A.
+/// Quick settings on Windows 11, opened as the taskbar's own button opens it.
+const QUICK_SETTINGS_URI: &str = "ms-actioncenter:controlcenter/&showFooter=true";
+/// The notification center and calendar on Windows 11.
+const NOTIFICATIONS_URI: &str = "ms-actioncenter:";
+/// The Windows 11 quick settings window.
+const QUICK_SETTINGS_CLASS: PCWSTR = w!("ControlCenterWindow");
+
+/// Opens the Windows 11 quick settings panel (network, volume, battery), or
+/// closes it when it was already open, as the taskbar's button does.
+///
+/// It is opened through its URI and not Win+A: a panel opened from the
+/// keyboard puts a keyboard focus box on its first tile (the Wi-Fi button),
+/// as if the user had tabbed to it. Win+A remains the fallback, and closes it.
 pub fn open_quick_settings() {
-    tap(&[VK_LWIN, VK_A]);
+    let was_open = QUICK_SETTINGS_OPEN_AT_PRESS.swap(false, Ordering::Relaxed);
+    if quick_settings_open() {
+        tap(&[VK_LWIN, VK_A]);
+        return;
+    }
+    if was_open {
+        // The press itself already dismissed it.
+        return;
+    }
+    if !crate::system::is_windows_11() || open(QUICK_SETTINGS_URI).is_err() {
+        tap(&[VK_LWIN, VK_A]);
+    }
 }
 
-/// Opens the notification center and calendar: Win+N on Windows 11. Windows
-/// 10 keeps notifications in the Action Center, which is Win+A there.
+/// Opens the notification center and calendar on Windows 11, or closes it
+/// when it was already open. Windows 10 keeps notifications in the Action
+/// Center, which is Win+A there.
+///
+/// Like quick settings, it is opened through its URI and not Win+N, which
+/// puts a keyboard focus box on its first button.
 pub fn open_notifications() {
-    if crate::system::is_windows_11() {
-        tap(&[VK_LWIN, VK_N]);
-    } else {
+    let was_open = NOTIFICATIONS_OPEN_AT_PRESS.swap(false, Ordering::Relaxed);
+    if !crate::system::is_windows_11() {
         tap(&[VK_LWIN, VK_A]);
+        return;
+    }
+    if notifications_open() {
+        tap(&[VK_LWIN, VK_N]);
+        return;
+    }
+    if was_open {
+        return;
+    }
+    if open(NOTIFICATIONS_URI).is_err() {
+        tap(&[VK_LWIN, VK_N]);
+    }
+}
+
+/// Whether the quick settings panel is on screen.
+fn quick_settings_open() -> bool {
+    // SAFETY: Read-only window lookups.
+    unsafe {
+        FindWindowW(QUICK_SETTINGS_CLASS, None)
+            .is_ok_and(|window| IsWindowVisible(window).as_bool())
+    }
+}
+
+/// Whether the notification center is open. Its window has a generic class
+/// and a translated title, but it takes the focus while open and belongs to
+/// the shell's experience host.
+fn notifications_open() -> bool {
+    // SAFETY: Read-only queries on the foreground window and its process; the
+    // process handle is closed before returning.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() || !IsWindowVisible(window).as_bool() {
+            return false;
+        }
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(window, &mut class);
+        let len = usize::try_from(len).unwrap_or(0).min(class.len());
+        if String::from_utf16_lossy(&class[..len]) != "Windows.UI.Core.CoreWindow" {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let image = crate::paths::query_process_image(process);
+        let _ = CloseHandle(process);
+        image.is_some_and(|path| {
+            path.rsplit('\\')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("ShellExperienceHost.exe"))
+        })
     }
 }
 
@@ -371,10 +450,16 @@ pub fn focus_front_or_desktop(windows: &[isize]) {
 /// Whether the hidden-icons flyout was open when the mouse button went down
 /// on the menu bar: if that press dismissed it, the click must not reopen it.
 static OVERFLOW_OPEN_AT_PRESS: AtomicBool = AtomicBool::new(false);
+/// The same for quick settings.
+static QUICK_SETTINGS_OPEN_AT_PRESS: AtomicBool = AtomicBool::new(false);
+/// The same for the notification center.
+static NOTIFICATIONS_OPEN_AT_PRESS: AtomicBool = AtomicBool::new(false);
 
 /// Call on mouse-button down over the menu bar, before its click.
 pub fn note_menu_bar_press() {
     OVERFLOW_OPEN_AT_PRESS.store(open_overflow().is_some(), Ordering::Relaxed);
+    QUICK_SETTINGS_OPEN_AT_PRESS.store(quick_settings_open(), Ordering::Relaxed);
+    NOTIFICATIONS_OPEN_AT_PRESS.store(notifications_open(), Ordering::Relaxed);
 }
 
 /// The hidden-icons flyout, if it is open.
