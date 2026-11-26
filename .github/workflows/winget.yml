@@ -1,0 +1,97 @@
+name: winget
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published stable tag (empty = latest stable release)'
+        type: string
+        required: false
+      submit:
+        description: 'Submit a PR to microsoft/winget-pkgs (requires WINGET_TOKEN)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget-projectGloria.Navalia
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hosted Windows Server images do not always include App Installer.
+      - name: Ensure the official WinGet validator is available
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Install-Module Microsoft.WinGet.Client -Repository PSGallery -Scope CurrentUser -Force
+            Repair-WinGetPackageManager -Force -Latest
+          }
+          $aliases = Join-Path $env:LOCALAPPDATA 'Microsoft/WindowsApps'
+          if (Test-Path -LiteralPath (Join-Path $aliases 'winget.exe')) {
+            $env:PATH = "$aliases;$env:PATH"
+            $aliases >> $env:GITHUB_PATH
+          }
+          winget --version
+          if ($LASTEXITCODE) { throw 'WinGet is unavailable' }
+
+      - name: Generate and validate the published installer manifest
+        id: manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          $manifest = ./scripts/New-WingetManifest.ps1 -Tag $env:RELEASE_TAG -OutputRoot out/winget
+          "directory=$($manifest.Directory)" >> $env:GITHUB_OUTPUT
+          "version=$($manifest.Version)" >> $env:GITHUB_OUTPUT
+          "## WinGet: projectGloria.Navalia $($manifest.Version)" >> $env:GITHUB_STEP_SUMMARY
+          "Validated SHA-256: ``$($manifest.Sha256)``" >> $env:GITHUB_STEP_SUMMARY
+          "Installer: $($manifest.InstallerUrl)" >> $env:GITHUB_STEP_SUMMARY
+
+      # Kept even when submission fails (missing/expired token, CLA, review).
+      - name: Save validated manifests
+        uses: actions/upload-artifact@v7
+        with:
+          name: winget-${{ steps.manifest.outputs.version }}
+          path: out/winget
+          retention-days: 30
+
+      - name: Check submission credentials
+        if: github.event_name == 'release' || inputs.submit
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_CREATE_GITHUB_TOKEN) {
+            throw 'Add the WINGET_TOKEN repository secret and rerun with Submit enabled. The validated manifests are saved as an artifact. See FIRMA-DE-CODIGO.md.'
+          }
+
+      - name: Install the runtime required by the pinned submission tool
+        if: github.event_name == 'release' || inputs.submit
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Submit the first package or a new version
+        if: github.event_name == 'release' || inputs.submit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          MANIFEST_DIRECTORY: ${{ steps.manifest.outputs.directory }}
+        run: ./scripts/Submit-WingetManifest.ps1 -ManifestDirectory $env:MANIFEST_DIRECTORY
+
+      - name: Explain preparation-only mode
+        if: github.event_name == 'workflow_dispatch' && !inputs.submit
+        run: |
+          'Preparation only: no PR was submitted. Run again with Submit enabled after configuring WINGET_TOKEN.' >> $env:GITHUB_STEP_SUMMARY

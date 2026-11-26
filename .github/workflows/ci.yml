@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/settings/pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check WinGet automation without network or credentials
+        shell: pwsh
+        run: ./scripts/Test-WingetAutomation.ps1
+
+      - name: Check code-signing policy without network, credentials or trust changes
+        shell: pwsh
+        run: ./scripts/Test-CodeSigning.ps1
+
+      - name: Check release antivirus verification without malware or Defender changes
+        shell: pwsh
+        run: ./scripts/Test-ReleaseAntivirus.ps1
+
+      # The settings app embeds its built front end at compile time.
+      - name: Build settings UI
+        working-directory: apps/settings
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
