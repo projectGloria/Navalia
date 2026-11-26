@@ -401,6 +401,13 @@ pub(crate) enum Outside {
         anchor: POINT,
         dark: bool,
     },
+    /// A menu bar icon's right-click menu: hide it, and for another app's
+    /// tray icon, that app's own menu.
+    MenuBarItemMenu {
+        gfx: Gfx,
+        menu: crate::menubar::ItemMenu,
+        dark: bool,
+    },
     QuitDock,
     OpenSettings,
     OpenAsAdmin(String),
@@ -773,21 +780,96 @@ fn place(hwnd: HWND, zone: &RECT, visible: bool) -> Result<()> {
 
 /// Runs `action` on the app and logs failures; a transient failure must not
 /// terminate the dock.
-pub(crate) fn with_app(what: &str, action: impl FnOnce(&mut App) -> Result<()>) {
+pub(crate) fn with_app(what: &'static str, action: impl FnOnce(&mut App) -> Result<()> + 'static) {
     with_app_then(what, |app| action(app).map(|()| None));
+}
+
+type AppAction = Box<dyn FnOnce(&mut App) -> Result<Option<Outside>>>;
+type Deferred = (&'static str, AppAction);
+
+/// More than this many waiting messages means something keeps the app
+/// borrowed; the oldest are dropped rather than growing without bound.
+const MAX_DEFERRED: usize = 256;
+
+thread_local! {
+    /// Messages that arrived while the app was borrowed, to run once it is
+    /// free (see `with_app_then`).
+    static DEFERRED: RefCell<std::collections::VecDeque<Deferred>> =
+        const { RefCell::new(std::collections::VecDeque::new()) };
+    /// What holds the app borrow now, for the log.
+    static HOLDER: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+    /// The waiting messages are being run; nested calls leave them to it.
+    static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Holder/caller pairs already logged, so a burst logs one line.
+    static LOGGED_BUSY: RefCell<std::collections::HashSet<(&'static str, &'static str)>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 /// Like `with_app`, but `action` can request work to perform after releasing
 /// the app state (see [`Outside`]).
-pub(crate) fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<Option<Outside>>) {
+///
+/// Windows delivers sent messages and WinEvent callbacks whenever the dock
+/// waits inside a call (moving a window, a cross-thread `SendMessage`, a COM
+/// call), so one can arrive while another holds the app. It is not dropped:
+/// it waits, in order, and runs as soon as the holder lets go.
+pub(crate) fn with_app_then(
+    what: &'static str,
+    action: impl FnOnce(&mut App) -> Result<Option<Outside>> + 'static,
+) {
+    let busy = APP.with(|cell| cell.try_borrow_mut().is_err());
+    if busy {
+        defer(what, Box::new(action));
+        return;
+    }
+    run_app(what, action);
+    drain_deferred();
+}
+
+fn defer(what: &'static str, action: AppAction) {
+    let holder = HOLDER.get();
+    if LOGGED_BUSY.with_borrow_mut(|logged| logged.insert((holder, what))) {
+        navalia_shell::log::line(&format!(
+            "{what}: arrived while busy with {holder}; deferred"
+        ));
+    }
+    DEFERRED.with_borrow_mut(|queue| {
+        if queue.len() >= MAX_DEFERRED
+            && let Some((dropped, _)) = queue.pop_front()
+        {
+            navalia_shell::log::line(&format!("{dropped}: too many waiting messages; dropped"));
+        }
+        queue.push_back((what, action));
+    });
+}
+
+/// Runs the messages that waited for the app, including any that arrive
+/// meanwhile. Only the outermost caller runs them.
+fn drain_deferred() {
+    if DRAINING.get() {
+        return;
+    }
+    DRAINING.set(true);
+    while let Some((what, action)) = DEFERRED.with_borrow_mut(std::collections::VecDeque::pop_front)
+    {
+        if APP.with(|cell| cell.try_borrow_mut().is_err()) {
+            // Still held (by a caller outside `with_app_then`): try later.
+            DEFERRED.with_borrow_mut(|queue| queue.push_front((what, action)));
+            break;
+        }
+        run_app(what, action);
+    }
+    DRAINING.set(false);
+}
+
+fn run_app(what: &'static str, action: impl FnOnce(&mut App) -> Result<Option<Outside>>) {
     let outside = APP.with(|cell| {
-        // Modal calls run outside the borrow, so this should not happen. If it
-        // does, discard the message rather than terminating the dock.
         let Ok(mut app) = cell.try_borrow_mut() else {
-            navalia_shell::log::line(&format!("{what}: dock was busy; ignoring"));
             return None;
         };
-        match app.as_mut().map(action) {
+        let previous = HOLDER.replace(what);
+        let result = app.as_mut().map(action);
+        HOLDER.set(previous);
+        match result {
             Some(Ok(outside)) => outside,
             Some(Err(error)) => {
                 crate::recovery::graphics_error(&error);
@@ -800,4 +882,23 @@ pub(crate) fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<
     if let Some(outside) = outside {
         run_outside(outside);
     }
+}
+
+/// Runs `action` now for a caller that needs its result (OLE callbacks, a
+/// handled flag); while the app is busy it does not run and `false` is
+/// returned.
+pub(crate) fn with_app_now(
+    what: &'static str,
+    action: impl FnOnce(&mut App) -> Result<Option<Outside>>,
+) -> bool {
+    if APP.with(|cell| cell.try_borrow_mut().is_err()) {
+        navalia_shell::log::line(&format!(
+            "{what}: arrived while busy with {}; skipped",
+            HOLDER.get()
+        ));
+        return false;
+    }
+    run_app(what, action);
+    drain_deferred();
+    true
 }

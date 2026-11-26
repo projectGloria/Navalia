@@ -189,5 +189,27 @@
     "Evening ride",
     "Summit",
     "Tokyo at night"
-  ]
+  ],
+  "menuBarHiddenIcons": "Hidden icons",
+  "menuBarHiddenIconsHint": "Right-click any icon in the menu bar and choose Hide from Menu Bar. Hidden icons are listed here.",
+  "menuBarHiddenIconsShow": "Show",
+  "menuBarHiddenIconsShowAll": "Show all",
+  "menuBarHiddenIconsUnknownApp": "Unknown app",
+  "menuBarIconNames": {
+    "accessories": "Accessory battery",
+    "control_center": "Control center",
+    "notifications": "Notifications",
+    "clock": "Clock",
+    "battery": "Battery",
+    "network": "Network",
+    "volume": "Volume",
+    "search": "Search",
+    "task_view": "Task view",
+    "hidden_icons": "Hidden icons arrow",
+    "input_language": "Input language",
+    "microphone": "Microphone",
+    "camera": "Camera",
+    "bluetooth": "Bluetooth",
+    "system_monitor": "System monitor"
+  }
 }

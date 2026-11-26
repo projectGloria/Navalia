@@ -113,6 +113,9 @@ pub struct TrayIcon {
     /// The process that owned `owner` when it was recorded: a handle Windows
     /// reuses for another process's window no longer counts as alive.
     pub owner_pid: u32,
+    /// The owner's executable file name, lowercase (`discord.exe`); empty
+    /// when it could not be read. Unlike `owner`, it survives restarts.
+    pub program: String,
     pub uid: u32,
     /// The message the owner wants clicks as; 0 when it gave none.
     pub callback: u32,
@@ -132,6 +135,31 @@ impl TrayIcon {
             IconKey::Guid(guid) => format!("{guid:032x}"),
             IconKey::Window { hwnd, uid } => format!("{hwnd:x}:{uid}"),
         }
+    }
+
+    /// An id that stays the same when the app or the computer restarts, for
+    /// remembering the user's choices about the icon (hiding it): the
+    /// program, then the GUID the app names the icon by or its number.
+    pub fn preference_key(&self) -> String {
+        let program = if self.program.is_empty() {
+            "?"
+        } else {
+            &self.program
+        };
+        match self.key {
+            IconKey::Guid(guid) => format!("tray:{program}:{guid:032x}"),
+            IconKey::Window { uid, .. } => format!("tray:{program}:{uid}"),
+        }
+    }
+
+    /// A name for the icon in menus: the first line of its tooltip, or the
+    /// program without `.exe`.
+    pub fn display_name(&self) -> String {
+        let tip = self.tip.lines().next().unwrap_or("").trim();
+        if !tip.is_empty() {
+            return tip.to_owned();
+        }
+        program_label(&self.program)
     }
 
     /// Worth a place on the bar: visible, with a picture and a way to click it.
@@ -279,7 +307,8 @@ fn new_icon(notify: &Notify, image: Option<Arc<IconImage>>, serial: &AtomicU64) 
     let mut icon = TrayIcon {
         key: notify.key(),
         owner: notify.hwnd,
-        owner_pid: window_pid(notify.hwnd),
+        owner_pid: 0,
+        program: String::new(),
         uid: notify.uid,
         callback: 0,
         version: 0,
@@ -300,8 +329,9 @@ fn update(
 ) -> bool {
     let before = icon.clone();
     if notify.hwnd != 0 {
-        if icon.owner != notify.hwnd {
+        if icon.owner != notify.hwnd || icon.owner_pid == 0 {
             icon.owner_pid = window_pid(notify.hwnd);
+            icon.program = process_program(icon.owner_pid);
         }
         icon.owner = notify.hwnd;
         icon.uid = notify.uid;
@@ -391,22 +421,40 @@ struct Shared {
     serial: AtomicU64,
     /// A change notification is on its way to the bar.
     posted: AtomicBool,
+    /// Counts changes to `icons`; `seen` is the count the bar last read.
+    /// The host's timer posts again while they differ, so a notification
+    /// the bar dropped (it was busy) cannot leave it showing stale icons.
+    version: AtomicU64,
+    seen: AtomicU64,
     notify_window: isize,
     notify_message: u32,
 }
 
 impl Shared {
     fn changed(&self) {
+        self.version.fetch_add(1, Ordering::AcqRel);
         if !self.posted.swap(true, Ordering::AcqRel) {
-            // SAFETY: A payload-free notification to the bar's window.
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(self.notify_window as *mut _)),
-                    self.notify_message,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
+            self.post();
+        }
+    }
+
+    /// Posts again if the bar has not read the latest icons.
+    fn repost_unseen(&self) {
+        if self.version.load(Ordering::Acquire) != self.seen.load(Ordering::Acquire) {
+            self.posted.store(true, Ordering::Release);
+            self.post();
+        }
+    }
+
+    fn post(&self) {
+        // SAFETY: A payload-free notification to the bar's window.
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(self.notify_window as *mut _)),
+                self.notify_message,
+                WPARAM(0),
+                LPARAM(0),
+            );
         }
     }
 }
@@ -437,6 +485,8 @@ impl TrayHost {
             icons: Mutex::new(Vec::new()),
             serial: AtomicU64::new(0),
             posted: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            seen: AtomicU64::new(0),
             notify_window,
             notify_message,
         });
@@ -462,12 +512,21 @@ impl TrayHost {
     /// The icons now, in the order they were added; allows the next change
     /// notification.
     pub fn icons(&self) -> Vec<TrayIcon> {
+        // Read the count first: a change made while copying posts again.
+        let version = self.shared.version.load(Ordering::Acquire);
         self.shared.posted.store(false, Ordering::Release);
+        self.shared.seen.store(version, Ordering::Release);
         self.shared
             .icons
             .lock()
             .map(|icons| icons.clone())
             .unwrap_or_default()
+    }
+
+    /// Drops the icons of apps that are gone now, instead of at the next
+    /// tick; for a click that found its app closed.
+    pub fn drop_dead_icons(&self) {
+        drop_orphans(&self.shared);
     }
 }
 
@@ -695,6 +754,37 @@ fn window_pid(window: isize) -> u32 {
     pid
 }
 
+/// The file name of the executable `pid` runs, lowercase; empty if unknown.
+fn process_program(pid: u32) -> String {
+    if pid == 0 {
+        return String::new();
+    }
+    // SAFETY: Opens the process only to read its image name, then closes it.
+    let image = unsafe {
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return String::new();
+        };
+        let read = crate::paths::query_process_image(process);
+        let _ = CloseHandle(process);
+        read
+    };
+    image
+        .as_deref()
+        .and_then(|path| path.rsplit('\\').next())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default()
+}
+
+/// `discord.exe` as `Discord`, for an icon with no tooltip.
+pub fn program_label(program: &str) -> String {
+    let stem = program.strip_suffix(".exe").unwrap_or(program);
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
 /// Whether `pid` runs a `navalia*` executable from the folder Navalia is
 /// installed in (the dock, its watchdog and workers, Settings).
 fn is_navalia_process(pid: u32, folder: Option<&std::path::Path>) -> bool {
@@ -833,6 +923,7 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
             keep_in_front(hwnd);
             if let Some(shared) = host_shared() {
                 drop_orphans(&shared);
+                shared.repost_unseen();
             }
             LRESULT(0)
         }
@@ -913,6 +1004,39 @@ mod tests {
             height: 1,
             bgra: vec![shade, shade, shade, 255],
         }))
+    }
+
+    #[test]
+    fn the_bar_is_told_again_until_it_reads_the_latest_icons() {
+        let shared = Arc::new(Shared {
+            icons: Mutex::new(Vec::new()),
+            serial: AtomicU64::new(0),
+            posted: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            seen: AtomicU64::new(0),
+            notify_window: 0,
+            notify_message: 0,
+        });
+        let host = TrayHost {
+            shared: Arc::clone(&shared),
+            window: 0,
+            thread: None,
+        };
+        let unseen =
+            || shared.version.load(Ordering::Acquire) != shared.seen.load(Ordering::Acquire);
+        assert!(!unseen());
+        // The first notice is dropped by a busy bar: still unseen, so the
+        // host's tick posts again.
+        shared.changed();
+        shared.changed();
+        assert!(unseen());
+        assert!(shared.posted.load(Ordering::Acquire));
+        let _ = host.icons();
+        assert!(!unseen());
+        assert!(!shared.posted.load(Ordering::Acquire));
+        shared.repost_unseen();
+        assert!(!shared.posted.load(Ordering::Acquire));
+        drop(host);
     }
 
     #[test]

@@ -46,4 +46,6 @@ pub(super) const TEXT: Strings = Strings {
     jump_frequent: "ঘন ঘন ব্যবহৃত",
     jump_recent: "সাম্প্রতিক",
     jump_tasks: "কাজ",
+    hide_from_menu_bar: "মেনু বার থেকে লুকান",
+    app_menu: "অ্যাপ মেনু…",
 };

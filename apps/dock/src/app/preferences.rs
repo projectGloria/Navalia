@@ -158,7 +158,28 @@ pub(super) fn hide_fixed_item(path: &std::path::Path, role: Role) -> Result<Conf
     Ok(navalia_config::update_preferences(path, patch)?)
 }
 
+/// Adds `key` to the hidden menu bar icons in the saved settings.
+pub(super) fn hide_menu_bar_item(path: &Path, key: &str) -> Result<Config> {
+    Ok(navalia_config::update(path, |saved| {
+        let mut saved = saved.unwrap_or_default();
+        if !saved.menu_bar_hidden_items.iter().any(|item| item == key) {
+            saved.menu_bar_hidden_items.push(key.to_owned());
+        }
+        Ok(saved)
+    })?)
+}
+
 impl App {
+    /// Hides a menu bar icon the user right-clicked, and remembers it.
+    pub(super) fn hide_menu_bar_item(&mut self, key: &str) -> Result<()> {
+        let saved = hide_menu_bar_item(&navalia_config::default_path(), key)?;
+        self.config.menu_bar_hidden_items = saved.menu_bar_hidden_items;
+        if let Some(bar) = &mut self.menubar {
+            bar.set_hidden_items(&self.gfx, &self.config.menu_bar_hidden_items)?;
+        }
+        Ok(())
+    }
+
     /// The settings app saved a change: read it and apply what differs.
     pub(super) fn reload_config(&mut self) -> Result<()> {
         self.close_group_view();
@@ -345,6 +366,7 @@ impl App {
                 .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
                 .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
+                .and_then(|()| bar.set_hidden_items(&self.gfx, &self.config.menu_bar_hidden_items))
                 .and_then(|()| {
                     let covered = primary_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));

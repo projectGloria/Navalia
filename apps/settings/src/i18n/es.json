@@ -189,5 +189,27 @@
     "Paseo al atardecer",
     "Cima",
     "Tokio de noche"
-  ]
+  ],
+  "menuBarHiddenIcons": "Iconos ocultos",
+  "menuBarHiddenIconsHint": "Haz clic derecho en cualquier icono de la barra de menús y elige Ocultar de la barra de menús. Los iconos ocultos aparecen aquí.",
+  "menuBarHiddenIconsShow": "Mostrar",
+  "menuBarHiddenIconsShowAll": "Mostrar todos",
+  "menuBarHiddenIconsUnknownApp": "Aplicación desconocida",
+  "menuBarIconNames": {
+    "accessories": "Batería de accesorios",
+    "control_center": "Centro de control",
+    "notifications": "Notificaciones",
+    "clock": "Reloj",
+    "battery": "Batería",
+    "network": "Red",
+    "volume": "Volumen",
+    "search": "Búsqueda",
+    "task_view": "Vista de tareas",
+    "hidden_icons": "Flecha de iconos ocultos",
+    "input_language": "Idioma de entrada",
+    "microphone": "Micrófono",
+    "camera": "Cámara",
+    "bluetooth": "Bluetooth",
+    "system_monitor": "Monitor del sistema"
+  }
 }

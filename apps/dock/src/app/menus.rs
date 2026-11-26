@@ -117,6 +117,43 @@ pub(super) fn run_outside(outside: Outside) {
             }
             menu_bar_refresh();
         }
+        Outside::MenuBarItemMenu { gfx, menu, dark } => {
+            const APP_MENU: u32 = 1;
+            const HIDE: u32 = 2;
+            const SETTINGS: u32 = 3;
+            let t = strings::text();
+            let mut items = Vec::new();
+            if menu.tray.is_some() {
+                items.push(MenuItem::action(APP_MENU, t.app_menu));
+            }
+            items.push(MenuItem::action(HIDE, t.hide_from_menu_bar));
+            items.push(MenuItem::Separator);
+            items.push(MenuItem::action(SETTINGS, t.settings));
+            let owner = main_window();
+            with_app("open menu bar icon menu", |app| {
+                app.menu_open = true;
+                Ok(())
+            });
+            let chosen = menu::show_below(&gfx, owner, &items, menu.anchor, dark);
+            with_app("close menu bar icon menu", App::after_menu);
+            match chosen {
+                Some(APP_MENU) => {
+                    if let Some(icon) = &menu.tray {
+                        navalia_shell::tray::click(
+                            icon,
+                            navalia_shell::tray::TrayClick::Right,
+                            menu.pointer,
+                        );
+                    }
+                }
+                Some(HIDE) => with_app("hide menu bar icon", move |app| {
+                    app.hide_menu_bar_item(&menu.key)
+                }),
+                Some(SETTINGS) => run_outside(Outside::OpenSettings),
+                _ => {}
+            }
+            menu_bar_refresh();
+        }
         Outside::EndTask(target) => {
             // Captured kernel handles are Send; no HWND or PID is resolved
             // again after the menu. Never wait on an unresponsive UI thread.
@@ -148,7 +185,7 @@ pub(super) fn run_outside(outside: Outside) {
             );
             with_app("menu closed", App::after_menu);
             if let Some(command) = chosen {
-                with_app_then("menu command", |app| {
+                with_app_then("menu command", move |app| {
                     app.on_command(request.target, command)
                 });
             }

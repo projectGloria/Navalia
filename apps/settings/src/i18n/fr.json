@@ -189,5 +189,27 @@
     "Balade du soir",
     "Sommet",
     "Tokyo la nuit"
-  ]
+  ],
+  "menuBarHiddenIcons": "Icônes masquées",
+  "menuBarHiddenIconsHint": "Faites un clic droit sur une icône de la barre des menus et choisissez Masquer de la barre des menus. Les icônes masquées sont listées ici.",
+  "menuBarHiddenIconsShow": "Afficher",
+  "menuBarHiddenIconsShowAll": "Tout afficher",
+  "menuBarHiddenIconsUnknownApp": "Application inconnue",
+  "menuBarIconNames": {
+    "accessories": "Batterie des accessoires",
+    "control_center": "Centre de contrôle",
+    "notifications": "Notifications",
+    "clock": "Horloge",
+    "battery": "Batterie",
+    "network": "Réseau",
+    "volume": "Volume",
+    "search": "Recherche",
+    "task_view": "Vue des tâches",
+    "hidden_icons": "Flèche des icônes masquées",
+    "input_language": "Langue de saisie",
+    "microphone": "Microphone",
+    "camera": "Caméra",
+    "bluetooth": "Bluetooth",
+    "system_monitor": "Moniteur système"
+  }
 }

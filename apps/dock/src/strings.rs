@@ -55,6 +55,10 @@ pub struct Strings {
     pub folder_unavailable: &'static str,
     pub change_folder: &'static str,
     pub remove_from_dock: &'static str,
+    /// A menu bar icon's right-click menu: hide that icon.
+    pub hide_from_menu_bar: &'static str,
+    /// A tray icon's right-click menu: the app's own menu.
+    pub app_menu: &'static str,
     pub shell_operation_failed: &'static str,
     pub keyboard_settings: &'static str,
     pub keyboard: &'static str,

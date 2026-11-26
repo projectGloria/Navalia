@@ -46,4 +46,6 @@ pub(super) const TEXT: Strings = Strings {
     jump_frequent: "متكررة",
     jump_recent: "حديثة",
     jump_tasks: "المهام",
+    hide_from_menu_bar: "إخفاء من شريط القوائم",
+    app_menu: "قائمة التطبيق…",
 };

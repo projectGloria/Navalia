@@ -189,5 +189,27 @@
     "সন্ধ্যার ভ্রমণ",
     "শিখর",
     "টোকিওর রাত"
-  ]
+  ],
+  "menuBarHiddenIcons": "লুকানো আইকন",
+  "menuBarHiddenIconsHint": "মেনু বারের যেকোনো আইকনে রাইট-ক্লিক করে মেনু বার থেকে লুকান বেছে নিন। লুকানো আইকনগুলো এখানে দেখা যায়।",
+  "menuBarHiddenIconsShow": "দেখান",
+  "menuBarHiddenIconsShowAll": "সব দেখান",
+  "menuBarHiddenIconsUnknownApp": "অজানা অ্যাপ",
+  "menuBarIconNames": {
+    "accessories": "অ্যাকসেসরির ব্যাটারি",
+    "control_center": "কন্ট্রোল সেন্টার",
+    "notifications": "বিজ্ঞপ্তি",
+    "clock": "ঘড়ি",
+    "battery": "ব্যাটারি",
+    "network": "নেটওয়ার্ক",
+    "volume": "ভলিউম",
+    "search": "অনুসন্ধান",
+    "task_view": "টাস্ক ভিউ",
+    "hidden_icons": "লুকানো আইকনের তীর",
+    "input_language": "ইনপুট ভাষা",
+    "microphone": "মাইক্রোফোন",
+    "camera": "ক্যামেরা",
+    "bluetooth": "ব্লুটুথ",
+    "system_monitor": "সিস্টেম মনিটর"
+  }
 }

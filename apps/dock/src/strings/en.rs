@@ -46,4 +46,6 @@ pub(super) const TEXT: Strings = Strings {
     folder_unavailable: "Folder unavailable",
     change_folder: "&Change Folder…",
     remove_from_dock: "&Remove from Dock",
+    hide_from_menu_bar: "&Hide from Menu Bar",
+    app_menu: "App &Menu…",
 };

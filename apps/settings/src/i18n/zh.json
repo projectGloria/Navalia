@@ -189,5 +189,27 @@
     "傍晚骑行",
     "山巅",
     "东京之夜"
-  ]
+  ],
+  "menuBarHiddenIcons": "已隐藏的图标",
+  "menuBarHiddenIconsHint": "在菜单栏中右键点击任意图标，然后选择“从菜单栏隐藏”。已隐藏的图标会列在这里。",
+  "menuBarHiddenIconsShow": "显示",
+  "menuBarHiddenIconsShowAll": "全部显示",
+  "menuBarHiddenIconsUnknownApp": "未知应用",
+  "menuBarIconNames": {
+    "accessories": "配件电量",
+    "control_center": "控制中心",
+    "notifications": "通知",
+    "clock": "时钟",
+    "battery": "电池",
+    "network": "网络",
+    "volume": "音量",
+    "search": "搜索",
+    "task_view": "任务视图",
+    "hidden_icons": "隐藏图标箭头",
+    "input_language": "输入语言",
+    "microphone": "麦克风",
+    "camera": "摄像头",
+    "bluetooth": "蓝牙",
+    "system_monitor": "系统监视器"
+  }
 }

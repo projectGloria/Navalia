@@ -719,6 +719,26 @@ export function App() {
                     onChange={(menuBarNotifications) => update({ menuBarNotifications })}
                   />
                 </SubRow>
+                {(config.menuBarHiddenItems ?? []).length > 0 ? (
+                  <SubRow label={t.menuBarHiddenIcons} hint={t.menuBarHiddenIconsHint} open={config.menuBar}>
+                    <button type="button" className="push" onClick={() => update({ menuBarHiddenItems: [] })}>
+                      {t.menuBarHiddenIconsShowAll}
+                    </button>
+                  </SubRow>
+                ) : null}
+                {(config.menuBarHiddenItems ?? []).map((key) => (
+                  <SubRow key={key} label={hiddenIconName(t, key)} open={config.menuBar}>
+                    <button
+                      type="button"
+                      className="push"
+                      onClick={() => update({
+                        menuBarHiddenItems: (config.menuBarHiddenItems ?? []).filter((item) => item !== key),
+                      })}
+                    >
+                      {t.menuBarHiddenIconsShow}
+                    </button>
+                  </SubRow>
+                ))}
                 <SubRow label={t.clockTarget} hint={config.menuBarClockTarget ?? t.clockTargetDefault} open={config.menuBar}>
                   <div className="push-group">
                     {config.menuBarClockTarget ? (
@@ -805,6 +825,15 @@ export function App() {
       </main>
     </div>
   );
+}
+
+/** A hidden menu bar icon's name: its built-in label, or the app that owns the tray icon. */
+function hiddenIconName(t: Texts, key: string): string {
+  const names: Record<string, string> = t.menuBarIconNames;
+  if (Object.hasOwn(names, key)) return names[key];
+  const program = key.startsWith("tray:") ? key.slice(5).split(":")[0].replace(/\.exe$/i, "") : "";
+  if (!program || program === "?") return t.menuBarHiddenIconsUnknownApp;
+  return program.charAt(0).toUpperCase() + program.slice(1);
 }
 
 function updateHint(t: Texts, state: UpdateState, version: string): string {

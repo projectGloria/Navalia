@@ -46,4 +46,6 @@ pub(super) const TEXT: Strings = Strings {
     folder_unavailable: "Carpeta no disponible",
     change_folder: "&Cambiar de carpeta…",
     remove_from_dock: "&Quitar del Dock",
+    hide_from_menu_bar: "&Ocultar de la barra de menús",
+    app_menu: "&Menú de la app…",
 };

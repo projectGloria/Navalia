@@ -13,6 +13,19 @@ impl MenuBar {
         if self.tray_items == items {
             return Ok(());
         }
+        // Apps rewrite their tooltips often (a download's progress every
+        // second); the bar does not show them, so that needs no redraw.
+        let same_but_tips = self.tray_items.len() == items.len()
+            && self.tray_items.iter().zip(&items).all(|(old, new)| {
+                TrayIcon {
+                    tip: new.tip.clone(),
+                    ..old.clone()
+                } == *new
+            });
+        if same_but_tips {
+            self.tray_items = items;
+            return Ok(());
+        }
         self.tray_icons
             .retain(|id, _| items.iter().any(|item| item.id() == *id));
         self.tray_items = items;
@@ -246,9 +259,13 @@ impl MenuBar {
         }
         let appearance = appearance::menu_bar();
         let look = Look {
-            accessories: self.accessories.as_ref().map_or([None, None], |monitor| {
-                accessory_readings(&monitor.snapshot())
-            }),
+            accessories: self
+                .accessories
+                .as_ref()
+                .filter(|_| !self.action_hidden(Action::AccessoryIndicator))
+                .map_or([None, None], |monitor| {
+                    accessory_readings(&monitor.snapshot())
+                }),
             monitor: self.monitor_lines(),
             language: strings::language(),
             screen: monitor.screen,
@@ -273,7 +290,13 @@ impl MenuBar {
             panel: self.panel,
             usage_refreshing: self.usage.as_ref().is_some_and(UsageMonitor::is_refreshing),
             track,
-            tray_items: self.tray_items.clone(),
+            tray_items: self
+                .tray_items
+                .iter()
+                .filter(|item| !self.is_hidden(&item.preference_key()))
+                .cloned()
+                .collect(),
+            hidden: self.hidden.clone(),
         };
         self.apply_look(gfx, look)
     }
@@ -281,7 +304,8 @@ impl MenuBar {
     /// Samples only while the monitor is on and the bar shows; a hidden or
     /// auto-hidden bar costs nothing (issue #64).
     pub(super) fn sync_monitor(&mut self, shown: bool) {
-        let wanted = self.widgets.system_monitor && shown;
+        let wanted =
+            self.widgets.system_monitor && shown && !self.action_hidden(Action::SystemMonitor);
         if wanted == self.monitor.is_some() {
             return;
         }
@@ -324,7 +348,7 @@ impl MenuBar {
 
     /// CPU and memory, then upload and download, as the bar shows them.
     pub(super) fn monitor_lines(&self) -> Option<[String; 4]> {
-        if !self.widgets.system_monitor {
+        if !self.widgets.system_monitor || self.action_hidden(Action::SystemMonitor) {
             return None;
         }
         let reading = self.monitor_reading;

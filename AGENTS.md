@@ -44,6 +44,6 @@ Lightweight macOS-inspired dock and optional menu bar for Windows 10/11 (Rust Wi
 
 ## Done Criteria
 - Run `pnpm --dir apps/settings test && pnpm --dir apps/settings build`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` (plus relevant `scripts/Test-*.ps1` when touching signing/winget/antivirus scripts).
-- Confirm all Version Manifests agree (currently `Cargo.toml` `[workspace.package]`).
+- Confirm all Version Manifests agree: `Cargo.toml` `[workspace.package]`, `gloria.toml`, and `apps/settings/package.json`.
 
 <!-- brain-sync: dbdb119dacdc -->

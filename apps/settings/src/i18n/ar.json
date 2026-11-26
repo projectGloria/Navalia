@@ -189,5 +189,27 @@
     "جولة مسائية",
     "القمة",
     "طوكيو ليلاً"
-  ]
+  ],
+  "menuBarHiddenIcons": "الأيقونات المخفية",
+  "menuBarHiddenIconsHint": "انقر بزر الماوس الأيمن على أي أيقونة في شريط القوائم واختر إخفاء من شريط القوائم. تظهر الأيقونات المخفية هنا.",
+  "menuBarHiddenIconsShow": "إظهار",
+  "menuBarHiddenIconsShowAll": "إظهار الكل",
+  "menuBarHiddenIconsUnknownApp": "تطبيق غير معروف",
+  "menuBarIconNames": {
+    "accessories": "بطارية الملحقات",
+    "control_center": "مركز التحكم",
+    "notifications": "الإشعارات",
+    "clock": "الساعة",
+    "battery": "البطارية",
+    "network": "الشبكة",
+    "volume": "مستوى الصوت",
+    "search": "البحث",
+    "task_view": "عرض المهام",
+    "hidden_icons": "سهم الأيقونات المخفية",
+    "input_language": "لغة الإدخال",
+    "microphone": "الميكروفون",
+    "camera": "الكاميرا",
+    "bluetooth": "بلوتوث",
+    "system_monitor": "مراقب النظام"
+  }
 }

@@ -37,7 +37,7 @@ use super::{
     TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WELCOME_TIMER, WM_MOUSELEAVE, WM_POWERBROADCAST,
     feedback::query_bin_in_background,
     lifecycle::{is_tracked, main_window},
-    with_app, with_app_then,
+    with_app, with_app_now, with_app_then,
 };
 
 const BACKDROP_REFRESH: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 11;
@@ -67,7 +67,9 @@ pub(super) unsafe extern "system" fn on_win_event(
         return;
     }
     if event == EVENT_SYSTEM_MINIMIZESTART {
-        with_app("minimize", |app| app.on_minimize_start(hwnd.0 as isize));
+        with_app("minimize", move |app| {
+            app.on_minimize_start(hwnd.0 as isize)
+        });
     } else if event == EVENT_SYSTEM_MINIMIZEEND {
         // Restored from outside the dock (Alt+Tab, the app itself): no shell
         // hook reports it, and a window the dock still thought minimized kept
@@ -108,19 +110,19 @@ pub(super) unsafe extern "system" fn on_win_event(
 
 /// Like `with_app`, for callers that need a value back (OLE callbacks).
 pub(super) fn with_app_value<T: Default>(
-    what: &str,
+    what: &'static str,
     action: impl FnOnce(&mut App) -> Result<T>,
 ) -> T {
     let mut value = T::default();
-    with_app(what, |app| {
+    with_app_now(what, |app| {
         value = action(app)?;
-        Ok(())
+        Ok(None)
     });
     value
 }
 
 pub fn menu_bar_clicked(x: f32, y: f32) {
-    with_app_then("menu bar", |app| {
+    with_app_then("menu bar", move |app| {
         if let Some(bar) = &mut app.menubar {
             if let Some(anchor) = bar.input_switcher_anchor(x, y) {
                 bar.dismiss_island(&app.gfx)?;
@@ -137,7 +139,7 @@ pub fn menu_bar_clicked(x: f32, y: f32) {
 }
 
 pub fn menu_bar_volume_press(x: f32, y: f32) {
-    with_app("volume", |app| {
+    with_app("volume", move |app| {
         if let Some(bar) = &mut app.menubar {
             bar.press_volume(&app.gfx, x, y)?;
         }
@@ -201,14 +203,22 @@ pub fn menu_bar_bluetooth_changed() {
     });
 }
 
-/// A right click on the bar: `true` if it opened a tray icon's menu.
+/// A right click on the bar: `true` if it was on an icon, whose menu opens.
 pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
     let mut handled = false;
-    with_app("system tray", |app| {
-        if let Some(bar) = &mut app.menubar {
-            handled = bar.right_click(&app.gfx, x, y)?;
-        }
-        Ok(())
+    with_app_now("menu bar icon menu", |app| {
+        let Some(bar) = &mut app.menubar else {
+            return Ok(None);
+        };
+        let Some(menu) = bar.right_click(&app.gfx, x, y)? else {
+            return Ok(None);
+        };
+        handled = true;
+        Ok(Some(Outside::MenuBarItemMenu {
+            gfx: app.gfx.clone(),
+            menu,
+            dark: !crate::appearance::menu_bar_light(),
+        }))
     });
     handled
 }
@@ -294,14 +304,14 @@ pub fn menu_bar_check_pointer() {
 }
 
 pub fn menu_bar_finish_hide(completed_epoch: Option<usize>) {
-    with_app("hide menu bar", |app| match &mut app.menubar {
+    with_app("hide menu bar", move |app| match &mut app.menubar {
         Some(bar) => bar.finish_hide(&app.gfx, completed_epoch),
         None => Ok(()),
     });
 }
 
 pub fn menu_bar_pointer_moved(x: f32, y: f32) {
-    with_app("menu bar", |app| match &mut app.menubar {
+    with_app("menu bar", move |app| match &mut app.menubar {
         Some(bar) => bar.pointer_moved(&app.gfx, x, y),
         None => Ok(()),
     });
@@ -413,7 +423,7 @@ pub(super) unsafe extern "system" fn wndproc(
         WM_TIMER if w.0 == DRAG_TIMER => with_app_then("drag", App::poll_drag),
         DROP_RUN => with_app_then("drop files", |app| Ok(app.pending_drop.take())),
         WM_RBUTTONUP => with_app_then("menu", App::on_right_click),
-        BIN_STATE => with_app("recycle bin", |app| app.set_bin_full(w.0 != 0)),
+        BIN_STATE => with_app("recycle bin", move |app| app.set_bin_full(w.0 != 0)),
         TASKBAR_PREFS_CHANGED => with_app("badge preferences", App::taskbar_preferences_changed),
         BIN_CHANGED => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
@@ -550,10 +560,10 @@ pub(super) unsafe extern "system" fn wndproc(
                 _ => with_app("hide Windows taskbar", |app| app.request_taskbar(true)),
             }
         }
-        APPBAR_CALLBACK => with_app("AppBar notice", |app| app.on_appbar_notice(w.0)),
+        APPBAR_CALLBACK => with_app("AppBar notice", move |app| app.on_appbar_notice(w.0)),
         // Once the taskbar is set to auto-hide, the dock strip moves to the
         // screen edge, so reserve and reposition it again.
-        TASKBAR_TAKEN => with_app("space reservation", |app| {
+        TASKBAR_TAKEN => with_app("space reservation", move |app| {
             app.taskbar_taken(w.0 != 0, l.0 != 0)
         }),
         WM_POWERBROADCAST if w.0 == PBT_APMRESUMEAUTOMATIC => {
@@ -608,9 +618,9 @@ pub(super) unsafe extern "system" fn wndproc(
             HSHELL_LANGUAGE => menu_bar_refresh(),
             code => {
                 if code == HSHELL_FLASH {
-                    with_app("attention notice", |app| app.on_attention(l.0));
+                    with_app("attention notice", move |app| app.on_attention(l.0));
                 } else if code == HSHELL_WINDOWDESTROYED {
-                    with_app("window closed", |app| app.forget_attention(l.0));
+                    with_app("window closed", move |app| app.forget_attention(l.0));
                 }
                 // SAFETY: `hwnd` is this live window on its owning UI thread.
                 unsafe { SetTimer(Some(hwnd), SYNC_TIMER, SYNC_DELAY_MS, None) };

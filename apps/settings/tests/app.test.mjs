@@ -284,6 +284,27 @@ test("the notifications button is opt-in and the clock target can be chosen and 
   } finally { unmount(); }
 });
 
+test("icons hidden from the menu bar are listed by name and can be shown again", async () => {
+  const hidden = ["battery", "tray:discord.exe:7", "tray:?:2", "volume"];
+  const view = fixture("menubar", { menuBarHiddenItems: hidden });
+  const markup = () => renderToStaticMarkup(view.body());
+  const unmount = await view.mount();
+  try {
+    for (const name of [texts.en.menuBarIconNames.battery, "Discord", texts.en.menuBarHiddenIconsUnknownApp,
+      texts.en.menuBarIconNames.volume]) assert.ok(markup().includes(name), name);
+    view.button(texts.en.menuBarHiddenIconsShow);
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls, [{ menuBarHiddenItems: hidden.slice(1) }]);
+    assert.doesNotMatch(markup(), new RegExp(`>${texts.en.menuBarIconNames.battery}<`));
+    view.button(texts.en.menuBarHiddenIconsShowAll);
+    view.fire(60);
+    await settle();
+    assert.deepEqual(view.calls.at(-1), { menuBarHiddenItems: [] });
+    assert.doesNotMatch(markup(), new RegExp(texts.en.menuBarHiddenIcons));
+  } finally { unmount(); }
+});
+
 test("other workspaces are opt-in and save without changing other window preferences", async () => {
   const view = fixture("windows", { showOtherWorkspaces: undefined });
   const checked = () => [...elements(view.body())].find((node) =>
@@ -641,8 +662,10 @@ test("all translations have complete keys, wallpaper names and intact placeholde
   for (const [language, catalog] of Object.entries(texts)) {
     assert.deepEqual(Object.keys(catalog).sort(), Object.keys(texts.en).sort(), language);
     for (const [key, original] of Object.entries(texts.en)) {
-      const values = Array.isArray(original) ? catalog[key] : [catalog[key]];
-      const originals = Array.isArray(original) ? original : [original];
+      const named = original !== null && typeof original === "object" && !Array.isArray(original);
+      if (named) assert.deepEqual(Object.keys(catalog[key]).sort(), Object.keys(original).sort(), `${language}/${key}`);
+      const values = Array.isArray(original) ? catalog[key] : named ? Object.values(catalog[key]) : [catalog[key]];
+      const originals = Array.isArray(original) ? original : named ? Object.values(original) : [original];
       assert.equal(values.length, originals.length, `${language}/${key}`);
       values.forEach((value, index) => {
         assert.equal(typeof value, "string");

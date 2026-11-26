@@ -189,5 +189,27 @@
     "शाम की सैर",
     "शिखर",
     "टोक्यो की रात"
-  ]
+  ],
+  "menuBarHiddenIcons": "छिपे हुए आइकन",
+  "menuBarHiddenIconsHint": "मेनू बार में किसी भी आइकन पर राइट-क्लिक करें और मेनू बार से छिपाएँ चुनें। छिपे हुए आइकन यहाँ दिखते हैं।",
+  "menuBarHiddenIconsShow": "दिखाएँ",
+  "menuBarHiddenIconsShowAll": "सभी दिखाएँ",
+  "menuBarHiddenIconsUnknownApp": "अज्ञात ऐप",
+  "menuBarIconNames": {
+    "accessories": "एक्सेसरी बैटरी",
+    "control_center": "कंट्रोल सेंटर",
+    "notifications": "सूचनाएँ",
+    "clock": "घड़ी",
+    "battery": "बैटरी",
+    "network": "नेटवर्क",
+    "volume": "वॉल्यूम",
+    "search": "खोज",
+    "task_view": "टास्क व्यू",
+    "hidden_icons": "छिपे आइकन का तीर",
+    "input_language": "इनपुट भाषा",
+    "microphone": "माइक्रोफ़ोन",
+    "camera": "कैमरा",
+    "bluetooth": "ब्लूटूथ",
+    "system_monitor": "सिस्टम मॉनिटर"
+  }
 }

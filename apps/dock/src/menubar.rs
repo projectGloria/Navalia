@@ -213,6 +213,44 @@ enum Action {
     TrayItem(usize),
 }
 
+impl Action {
+    /// The name `Config::menu_bar_hidden_items` uses for this built-in item.
+    /// Tray icons use `TrayIcon::preference_key` instead.
+    pub(super) fn preference_key(self) -> Option<&'static str> {
+        Some(match self {
+            Self::AccessoryIndicator => "accessories",
+            Self::QuickSettings => "control_center",
+            Self::Notifications => "notifications",
+            Self::Clock => "clock",
+            Self::Power => "battery",
+            Self::Network => "network",
+            Self::Sound => "volume",
+            Self::Search => "search",
+            Self::TaskView => "task_view",
+            Self::HiddenIcons => "hidden_icons",
+            Self::InputLanguage => "input_language",
+            Self::Microphone => "microphone",
+            Self::Camera => "camera",
+            Self::Bluetooth => "bluetooth",
+            Self::SystemMonitor => "system_monitor",
+            Self::TrayItem(_) => return None,
+        })
+    }
+}
+
+/// What a right click on a menu bar icon offers (see `MenuBar::item_menu_at`).
+pub struct ItemMenu {
+    /// The entry `Config::menu_bar_hidden_items` gets if the user hides it.
+    pub key: String,
+    /// The other app's tray icon, whose own menu the menu also offers.
+    pub tray: Option<TrayIcon>,
+    /// Where the menu opens, in screen pixels.
+    pub anchor: POINT,
+    /// Where the pointer was: the app's own menu opens there, as it did
+    /// when a right click went straight to the app.
+    pub pointer: (i32, i32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuBarWidgets {
     pub island_style: IslandStyle,
@@ -284,6 +322,8 @@ struct Look {
     usage_refreshing: bool,
     track: Option<Track>,
     tray_items: Vec<TrayIcon>,
+    /// `Config::menu_bar_hidden_items`.
+    hidden: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -615,6 +655,8 @@ pub struct MenuBar {
     tray_icons: HashMap<String, (u64, Option<CompositionSurfaceBrush>)>,
     /// The last tray click, to tell a double click.
     tray_last_click: Option<(IconKey, Instant)>,
+    /// Icons the user hid (`Config::menu_bar_hidden_items`).
+    hidden: Vec<String>,
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -930,6 +972,7 @@ impl MenuBar {
             tray_items: Vec::new(),
             tray_icons: HashMap::new(),
             tray_last_click: None,
+            hidden: Vec::new(),
         };
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
@@ -1067,6 +1110,26 @@ impl MenuBar {
         }
         self.widgets = widgets;
         self.refresh(gfx)
+    }
+
+    /// The icons the user hid (`Config::menu_bar_hidden_items`).
+    pub fn set_hidden_items(&mut self, gfx: &Gfx, hidden: &[String]) -> Result<()> {
+        if self.hidden == hidden {
+            return Ok(());
+        }
+        self.hidden = hidden.to_vec();
+        self.sync_monitor(self.shown());
+        self.refresh(gfx)
+    }
+
+    pub(super) fn is_hidden(&self, key: &str) -> bool {
+        self.hidden.iter().any(|item| item == key)
+    }
+
+    fn action_hidden(&self, action: Action) -> bool {
+        action
+            .preference_key()
+            .is_some_and(|key| self.is_hidden(key))
     }
 
     /// What clicking the clock opens; `None` for the notification center.

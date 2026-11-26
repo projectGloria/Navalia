@@ -189,5 +189,27 @@
     "Passeio ao entardecer",
     "Cume",
     "Tóquio à noite"
-  ]
+  ],
+  "menuBarHiddenIcons": "Ícones ocultos",
+  "menuBarHiddenIconsHint": "Clique com o botão direito em qualquer ícone da barra de menus e escolha Ocultar da barra de menus. Os ícones ocultos aparecem aqui.",
+  "menuBarHiddenIconsShow": "Mostrar",
+  "menuBarHiddenIconsShowAll": "Mostrar todos",
+  "menuBarHiddenIconsUnknownApp": "Aplicativo desconhecido",
+  "menuBarIconNames": {
+    "accessories": "Bateria de acessórios",
+    "control_center": "Central de controle",
+    "notifications": "Notificações",
+    "clock": "Relógio",
+    "battery": "Bateria",
+    "network": "Rede",
+    "volume": "Volume",
+    "search": "Pesquisa",
+    "task_view": "Visão de tarefas",
+    "hidden_icons": "Seta de ícones ocultos",
+    "input_language": "Idioma de entrada",
+    "microphone": "Microfone",
+    "camera": "Câmera",
+    "bluetooth": "Bluetooth",
+    "system_monitor": "Monitor do sistema"
+  }
 }

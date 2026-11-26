@@ -124,6 +124,10 @@ pub struct Config {
     /// default: off, nothing is sampled; on, every 2 s only while the bar
     /// is on screen.
     pub menu_bar_system_monitor: bool,
+    /// Menu bar icons the user hid by right-clicking them: built-in ones by
+    /// name (`clock`, `battery`, `network`...) and other apps' tray icons as
+    /// `tray:<program>:<id>`. Settings lists them to show them again.
+    pub menu_bar_hidden_items: Vec<String>,
     /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
     pub accessory_battery: bool,
     /// The dot under apps that have windows open.
@@ -384,6 +388,13 @@ impl Config {
             .menu_bar_clock_target
             .map(|target| target.trim().to_owned())
             .filter(|target| !target.is_empty());
+        let mut seen = std::collections::HashSet::new();
+        self.menu_bar_hidden_items = self
+            .menu_bar_hidden_items
+            .iter()
+            .map(|item| item.trim().to_owned())
+            .filter(|item| !item.is_empty() && seen.insert(item.clone()))
+            .collect();
         self
     }
 
@@ -433,6 +444,7 @@ impl Default for Config {
             menu_bar_island_style: IslandStyle::Notch,
             menu_bar_notifications: false,
             menu_bar_system_monitor: false,
+            menu_bar_hidden_items: Vec::new(),
             menu_bar_clock_target: None,
             accessory_battery: false,
             show_indicators: true,
@@ -1092,6 +1104,21 @@ mod tests {
         assert!(!older.menu_bar_system_monitor);
         let chosen: Config = serde_json::from_str(r#"{"menuBarSystemMonitor":true}"#)?;
         assert!(chosen.menu_bar_system_monitor);
+        Ok(())
+    }
+
+    #[test]
+    fn menu_bar_icons_show_unless_hidden_and_repeats_are_dropped() -> Result<(), serde_json::Error>
+    {
+        let older: Config = serde_json::from_str("{}")?;
+        assert!(older.menu_bar_hidden_items.is_empty());
+        let chosen: Config = serde_json::from_str(
+            r#"{"menuBarHiddenItems":["battery"," ","tray:discord.exe:1","battery"]}"#,
+        )?;
+        assert_eq!(
+            chosen.sanitized().menu_bar_hidden_items,
+            ["battery", "tray:discord.exe:1"]
+        );
         Ok(())
     }
 

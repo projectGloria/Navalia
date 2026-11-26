@@ -46,4 +46,6 @@ pub(super) const TEXT: Strings = Strings {
     jump_frequent: "Frequentes",
     jump_recent: "Recentes",
     jump_tasks: "Tarefas",
+    hide_from_menu_bar: "&Ocultar da barra de menus",
+    app_menu: "&Menu do app…",
 };

@@ -582,7 +582,15 @@ impl MenuBar {
         if status.buttons.task_view {
             items.push((symbol(&[(glyph::TASK_VIEW, 1.0)])?, Action::TaskView));
         }
+        let hidden = |action: Action| {
+            action
+                .preference_key()
+                .is_some_and(|key| look.hidden.iter().any(|item| item == key))
+        };
         for (index, (item, action)) in items.iter().enumerate() {
+            if hidden(*action) {
+                continue;
+            }
             let label = battery_label
                 .iter()
                 .chain(accessory_labels.iter())
@@ -601,10 +609,9 @@ impl MenuBar {
             let left = right - item.width;
             place(&layers, item, left)?;
             // The battery icon and its percentage form one control.
-            // Accessory readings are passive status indicators, not controls.
-            if *action != Action::AccessoryIndicator {
-                self.zones.push((left - slop, zone_right + slop, *action));
-            }
+            // Accessory readings do nothing on a click; their zone is there
+            // for the right-click menu that hides them.
+            self.zones.push((left - slop, zone_right + slop, *action));
             right = left - px(ITEM_GAP);
         }
 
@@ -615,17 +622,18 @@ impl MenuBar {
         let tray_gap = px(10.0);
         let tray_slop = px(4.0);
         let arrow = symbol(&[(glyph::HIDDEN_ICONS, 1.0)])?;
-        let tray_start = if left_wing_start + arrow.width <= left_wing_max {
-            place(&layers, &arrow, left_wing_start)?;
-            self.zones.push((
-                left_wing_start - tray_slop,
-                left_wing_start + arrow.width + tray_slop,
-                Action::HiddenIcons,
-            ));
-            left_wing_start + arrow.width + tray_gap
-        } else {
-            left_wing_start
-        };
+        let tray_start =
+            if !hidden(Action::HiddenIcons) && left_wing_start + arrow.width <= left_wing_max {
+                place(&layers, &arrow, left_wing_start)?;
+                self.zones.push((
+                    left_wing_start - tray_slop,
+                    left_wing_start + arrow.width + tray_slop,
+                    Action::HiddenIcons,
+                ));
+                left_wing_start + arrow.width + tray_gap
+            } else {
+                left_wing_start
+            };
         let tray_spans = tray_item_spans(
             tray_start,
             left_wing_max,

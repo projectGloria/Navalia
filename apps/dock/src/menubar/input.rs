@@ -1,13 +1,14 @@
 use super::*;
 
 impl MenuBar {
-    pub fn right_click(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<bool> {
-        let Some(item) = self.tray_item_at(x, y) else {
-            return Ok(false);
+    /// A right click on an icon: closes the island and returns the icon's
+    /// menu, which the caller shows outside the app borrow.
+    pub fn right_click(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<Option<ItemMenu>> {
+        let Some(menu) = self.item_menu_at(x, y) else {
+            return Ok(None);
         };
         self.dismiss_island(gfx)?;
-        tray::click(&item, TrayClick::Right, cursor_anchor());
-        Ok(true)
+        Ok(Some(menu))
     }
 
     pub fn hover(&mut self, gfx: &Gfx, inside: bool) -> Result<()> {
@@ -389,7 +390,13 @@ impl MenuBar {
                     } else {
                         TrayClick::Left
                     };
-                    tray::click(&item, kind, cursor_anchor());
+                    if !tray::click(&item, kind, cursor_anchor()) {
+                        // Its app closed without removing the icon.
+                        if let Some(host) = &self.tray_host {
+                            host.drop_dead_icons();
+                        }
+                        return self.tray_changed(gfx);
+                    }
                 }
             }
             None => {}

@@ -47,6 +47,8 @@ export interface Config {
   menuBarClockTarget: string | null;
   accessoryBattery: boolean;
   menuBarSystemMonitor?: boolean;
+  /** Menu bar icons the user hid by right-clicking them: built-in names or `tray:<program>:<id>`. */
+  menuBarHiddenItems?: string[];
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;

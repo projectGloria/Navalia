@@ -254,22 +254,6 @@ pub(super) fn tray_item_spans(
 }
 
 impl MenuBar {
-    pub(super) fn tray_item_at(&self, x: f32, y: f32) -> Option<TrayIcon> {
-        let bar_y = (self.visual_height - (self.bounds.bottom - self.bounds.top)).max(0) as f32;
-        if y < bar_y {
-            return None;
-        }
-        let (_, _, action) = self
-            .zones
-            .iter()
-            .find(|(left, right, _)| x >= *left && x < *right)?;
-        match action {
-            Action::TrayItem(idx) => self.look.as_ref()?.tray_items.get(*idx).cloned(),
-            _ => None,
-        }
-    }
-
-    /// Opens a tray icon's menu. `false` when (`x`, `y`) is not on one.
     pub(super) fn reveal_lift(&self) -> f32 {
         (self.bounds.bottom - self.bounds.top) as f32 * 0.3
     }
@@ -363,6 +347,34 @@ impl MenuBar {
                 x: self.bounds.left + ((left + right) * 0.5) as i32,
                 y: self.bounds.top - 6,
             })
+    }
+
+    /// The icon under (`x`, `y`) and what its right-click menu offers.
+    pub fn item_menu_at(&self, x: f32, y: f32) -> Option<ItemMenu> {
+        let bar_y = (self.visual_height - (self.bounds.bottom - self.bounds.top)).max(0) as f32;
+        if y < bar_y || y >= self.visual_height as f32 {
+            return None;
+        }
+        let (left, right, action) = self
+            .zones
+            .iter()
+            .find(|(left, right, _)| x >= *left && x < *right)?;
+        let (key, tray) = match action {
+            Action::TrayItem(idx) => {
+                let item = self.look.as_ref()?.tray_items.get(*idx)?.clone();
+                (item.preference_key(), Some(item))
+            }
+            other => (other.preference_key()?.to_owned(), None),
+        };
+        Some(ItemMenu {
+            key,
+            tray,
+            anchor: POINT {
+                x: self.bounds.left + ((left + right) * 0.5) as i32,
+                y: self.bounds.top - 6,
+            },
+            pointer: cursor_anchor(),
+        })
     }
 
     /// Renew the host sample without rebuilding an open island or its controls.
