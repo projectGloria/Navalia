@@ -358,7 +358,6 @@ pub fn default_audio_container() -> Option<String> {
 pub struct TaskbarButtons {
     pub search: bool,
     pub task_view: bool,
-    pub widgets: bool,
 }
 
 const ADVANCED: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
@@ -402,9 +401,6 @@ pub fn taskbar_buttons() -> TaskbarButtons {
     TaskbarButtons {
         search: dword(SEARCH, "SearchboxTaskbarMode").unwrap_or(1) != 0,
         task_view: dword(ADVANCED, "ShowTaskViewButton").unwrap_or(1) != 0,
-        // Windows 10 has no Widgets (its value is never written there, so it
-        // would read as shown), and Win+W opens Windows Ink instead.
-        widgets: crate::system::is_windows_11() && dword(ADVANCED, "TaskbarDa").unwrap_or(1) != 0,
     }
 }
 

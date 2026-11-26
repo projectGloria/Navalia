@@ -618,8 +618,8 @@ impl MenuBar {
         let tray_start = if left_wing_start + arrow.width <= left_wing_max {
             place(&layers, &arrow, left_wing_start)?;
             self.zones.push((
-                left_wing_start - slop,
-                left_wing_start + arrow.width + slop,
+                left_wing_start - tray_slop,
+                left_wing_start + arrow.width + tray_slop,
                 Action::HiddenIcons,
             ));
             left_wing_start + arrow.width + tray_gap

@@ -429,7 +429,7 @@ pub(super) unsafe extern "system" fn wndproc(
             queue_backdrop_refresh(main_window());
             if hwnd == main_window() {
                 // Rebind the host sample now without discarding geometry or
-                // closing previews. A real light/glass change is still picked
+                // closing group panels. A real light/glass change is still picked
                 // up by the normal scene keys when Windows finishes settling.
                 // SAFETY: This is our live main UI window.
                 unsafe {

@@ -36,13 +36,12 @@ mod island_tests {
         look.accessories = [None, None];
         look.status.bluetooth_on = false;
         let mut battery_width = [0.0; 2];
-        for mask in 0..16 {
+        for mask in 0..8 {
             look.status.buttons = TaskbarButtons {
                 search: mask & 1 != 0,
                 task_view: mask & 2 != 0,
-                widgets: mask & 4 != 0,
             };
-            look.status.battery_percentage = mask & 8 != 0;
+            look.status.battery_percentage = mask & 4 != 0;
             bar.apply_look(&gfx, look.clone())?;
             for (action, on) in [
                 (Action::Search, look.status.buttons.search),

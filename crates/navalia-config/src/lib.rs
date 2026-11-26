@@ -160,8 +160,7 @@ pub struct Config {
     pub shortcuts_folder: Option<String>,
     // Retired switches, whose saved values are ignored: the attention
     // indicator follows Windows' own "Show badges on taskbar apps"; icons
-    // always bounce for attention; window previews always have a close
-    // button.
+    // always bounce for attention.
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on

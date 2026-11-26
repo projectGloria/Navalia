@@ -15,8 +15,8 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::{
                 INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-                SendInput, VIRTUAL_KEY, VK_A, VK_B, VK_D, VK_ESCAPE, VK_LCONTROL, VK_LWIN, VK_N,
-                VK_S, VK_SPACE, VK_TAB, VK_V, VK_W,
+                SendInput, VIRTUAL_KEY, VK_A, VK_B, VK_D, VK_ESCAPE, VK_LWIN, VK_N, VK_S, VK_SPACE,
+                VK_TAB,
             },
             Shell::{SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
@@ -229,22 +229,6 @@ pub fn open_search() {
 /// Task View (open windows and virtual desktops): Win+Tab.
 pub fn open_task_view() {
     tap(&[VK_LWIN, VK_TAB]);
-}
-
-/// The Widgets board: Win+W.
-pub fn open_widgets() {
-    tap(&[VK_LWIN, VK_W]);
-}
-
-/// The sound output page of quick settings (Windows 11 22H2+): Win+Ctrl+V.
-/// Windows 10 has no shortcut for its volume flyout, so it opens the sound
-/// page of Settings instead.
-pub fn open_sound() {
-    if crate::system::is_windows_11() {
-        tap(&[VK_LWIN, VK_LCONTROL, VK_V]);
-    } else {
-        let _ = open("ms-settings:sound");
-    }
 }
 
 /// Opens the Windows Bluetooth settings page.

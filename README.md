@@ -27,9 +27,6 @@
 - Launch, pin, reorder, and manage apps, including recent apps and open windows.
 - Group pinned apps into a single dock icon: drop one app onto another, click
   the group to fan its apps out, and drag one out of the fan to take it back.
-- Hover over an app with multiple windows to show live, titled previews;
-  click a preview to switch to that window. Scroll over the previews for more
-  windows, or press Escape to dismiss it.
 - Minimized windows fold into their app's icon with the Genie effect; turn on
   Settings → Windows → *Show minimized windows* to keep them as live thumbnails
   on the right side of the dock instead.

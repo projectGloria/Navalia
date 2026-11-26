@@ -233,7 +233,7 @@ impl Theme {
     }
 }
 
-/// The material is shared so dock and preview panels follow the same theme
+/// The material is shared so the dock and its pop-out panels follow the same theme
 /// and opaque fallback when Windows transparency is disabled.
 struct GlassSurface {
     glass: ContainerVisual,

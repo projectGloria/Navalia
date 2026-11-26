@@ -107,7 +107,7 @@ impl App {
     }
 
     /// A wallpaper change does not change scene keys. Refresh the host samples
-    /// in place, preserving magnification, drag state and open previews/panels.
+    /// in place, preserving magnification, drag state and open panels.
     pub(super) fn refresh_backdrops(&mut self) -> Result<()> {
         if let Some(stage) = &self.stage {
             self.gfx.refresh_backdrops(&stage.scene.root)?;
