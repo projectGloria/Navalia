@@ -4,7 +4,6 @@
 //! app, starting). Nothing is written while the dock is idle.
 
 use std::{
-    env,
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
@@ -36,8 +35,7 @@ pub fn line(text: &str) {
         thread::Builder::new()
             .name("navalia-log".into())
             .spawn(move || {
-                let path = env::var_os("LOCALAPPDATA")
-                    .map(|folder| Path::new(&folder).join("Navalia").join("navalia.log"));
+                let path = Some(crate::paths::local_file("navalia.log"));
                 for message in receiver {
                     match message {
                         Message::Line(now, text) => {
@@ -99,7 +97,7 @@ mod tests {
 
     #[test]
     fn rotation_replaces_the_previous_backup_and_bounds_both_files() -> std::io::Result<()> {
-        let folder = env::temp_dir().join(format!("navalia-log-test-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("navalia-log-test-{}", std::process::id()));
         let path = folder.join("navalia.log");
         let message = "a".repeat(LINE_LIMIT);
         for _ in 0..200 {

@@ -127,13 +127,19 @@ impl App {
             return;
         }
         let windows = &self.windows;
+        let before = self.calmed.len();
         self.calmed
             .retain(|hwnd| windows.iter().any(|window| window.hwnd == *hwnd));
+        let mut changed = self.calmed.len() != before;
         for window in windows {
             if !self.calmed.contains(&window.hwnd) {
                 set_window_transitions(window.hwnd, false);
                 self.calmed.push(window.hwnd);
+                changed = true;
             }
+        }
+        if changed {
+            save_calmed(&self.calmed);
         }
     }
 
@@ -141,6 +147,7 @@ impl App {
         for hwnd in self.calmed.drain(..) {
             set_window_transitions(hwnd, true);
         }
+        save_calmed(&self.calmed);
     }
 
     /// Brings windows to the front. A minimized one flies out of the dock if
@@ -152,11 +159,15 @@ impl App {
             // `tick` restores the window when the genie reaches full size.
             return None;
         }
+        let before = self.calmed.len();
         for hwnd in &windows {
             if self.minimized.contains(hwnd) {
                 set_window_transitions(*hwnd, true);
                 self.calmed.retain(|calmed| calmed != hwnd);
             }
+        }
+        if self.calmed.len() != before {
+            save_calmed(&self.calmed);
         }
         Some(Outside::Activate(windows))
     }
@@ -301,7 +312,7 @@ impl App {
             self.render()?;
         }
         if let Err(error) = self.start_following() {
-            eprintln!("navalia: Alt+Tab: {error:#}");
+            navalia_shell::log::line(&format!("Alt+Tab: {error:#}"));
         }
         Ok(())
     }
@@ -663,6 +674,23 @@ impl App {
             None => {}
         }
     }
+}
+
+fn save_calmed(calmed: &[isize]) {
+    let file = navalia_shell::paths::local_file("calmed-windows");
+    if calmed.is_empty() {
+        let _ = std::fs::remove_file(file);
+        return;
+    }
+    let body = calmed
+        .iter()
+        .map(isize::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(file, body);
 }
 
 #[cfg(test)]

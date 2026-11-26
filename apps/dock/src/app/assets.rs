@@ -52,7 +52,9 @@ impl App {
                 let icon = self
                     .gfx
                     .group_brush(wanted, &images, entry.members.len(), light)
-                    .inspect_err(|error| eprintln!("navalia: icono del grupo `{id}`: {error:#}"))
+                    .inspect_err(|error| {
+                        navalia_shell::log::line(&format!("group icon `{id}`: {error:#}"));
+                    })
                     .ok()
                     .or_else(|| self.placeholder.clone());
                 let names: Vec<String> = entry
@@ -72,7 +74,9 @@ impl App {
                         light,
                         edge,
                     )
-                    .inspect_err(|error| eprintln!("navalia: etiqueta del grupo `{id}`: {error:#}"))
+                    .inspect_err(|error| {
+                        navalia_shell::log::line(&format!("group label `{id}`: {error:#}"));
+                    })
                     .ok();
                 self.assets.insert(
                     id.clone(),
@@ -133,7 +137,9 @@ impl App {
                     let side = wanted.min(visual.icon.width);
                     self.gfx
                         .icon_brush(&visual.icon, side)
-                        .inspect_err(|error| eprintln!("navalia: icono de `{id}`: {error:#}"))
+                        .inspect_err(|error| {
+                            navalia_shell::log::line(&format!("icon `{id}`: {error:#}"));
+                        })
                         .ok()
                 })
                 .or_else(|| self.placeholder.clone());
@@ -141,7 +147,9 @@ impl App {
             let label = self
                 .gfx
                 .label_brush(&name, scale, light, edge)
-                .inspect_err(|error| eprintln!("navalia: etiqueta de `{id}`: {error:#}"))
+                .inspect_err(|error| {
+                    navalia_shell::log::line(&format!("label `{id}`: {error:#}"));
+                })
                 .ok();
             self.assets.insert(
                 id.clone(),

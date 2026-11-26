@@ -1,0 +1,10 @@
+id = "Navalia"
+name = "Navalia"
+version = "0.1.25"
+main_exe = "navalia.exe"
+icon = "assets/brand/navalia.ico"
+accent = "#38bdf8"
+description = "macOS-inspired dock and menu bar for Windows"
+needs_webview2 = true
+data_folders = ['%APPDATA%\Navalia', '%LOCALAPPDATA%\Navalia']
+legacy_names = ["Navalia"]

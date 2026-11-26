@@ -27,5 +27,5 @@ expect_used = "warn"
 lto = true
 codegen-units = 1
 strip = true
-# Un fallo cierra el proceso sin más: el guardián devuelve la barra de tareas.
+# Abort immediately on panic so the --guard watchdog restores the taskbar.
 panic = "abort"

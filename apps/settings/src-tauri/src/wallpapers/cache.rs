@@ -9,7 +9,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use super::catalog::{ORIGIN, Wallpaper};
+use super::catalog::{ORIGINS, Wallpaper};
 
 static TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
@@ -69,20 +69,38 @@ pub(super) fn download(asset: &Wallpaper, file: &mut fs::File) -> Result<(), Str
         ))
         .build()
         .map_err(|error| error.to_string())?;
-    let response = client
-        .get(format!("{ORIGIN}/{}", asset.name))
-        .send()
-        .map_err(|error| error.to_string())?;
-    if response.status() != reqwest::StatusCode::OK {
-        return Err(format!("Wallpaper download failed ({})", response.status()));
+    from_first_origin(asset, |url| {
+        let response = client.get(url).send().map_err(|error| error.to_string())?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(format!("Wallpaper download failed ({})", response.status()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|size| size != asset.bytes)
+        {
+            return Err("Unexpected wallpaper download size".into());
+        }
+        copy_body(response, file, asset.bytes)?;
+        Ok(true)
+    })
+}
+
+/// Requests the asset from each origin in turn. `fetch` returns `false` for
+/// a 404 Not Found, the only answer that moves on to the next origin: any
+/// other failure stops, so nothing is written twice into the same file.
+pub(super) fn from_first_origin(
+    asset: &Wallpaper,
+    mut fetch: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<(), String> {
+    for origin in ORIGINS {
+        if fetch(&format!("{origin}/{}", asset.name))? {
+            return Ok(());
+        }
     }
-    if response
-        .content_length()
-        .is_some_and(|size| size != asset.bytes)
-    {
-        return Err("Unexpected wallpaper download size".into());
-    }
-    copy_body(response, file, asset.bytes)
+    Err("Wallpaper download failed (404 Not Found)".into())
 }
 
 pub(super) fn materialize(

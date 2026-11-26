@@ -38,22 +38,21 @@ try {
         $null = [Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
         if ($errors) { throw ($errors | Out-String) }
     }
-    $common = @{ Version = '0.1.17'; RefName = 'v0.1.17'; Organization = 'configured'; Project = 'Navalia'; TokenPresent = $true }
-    $lane = & $modeScript -EventName workflow_dispatch @common -Policy release-signing
-    if ($lane.Mode -ne 'Test' -or $lane.Policy -ne 'test-signing') { throw 'Manual runs must always be tests.' }
-    Write-Host 'PASS: manual run uses only test-signing, even with production configured'
-    $lane = & $modeScript -EventName push -Version 0.1.17 -RefName v0.1.17
+    $common = @{ Version = '0.1.17'; Organization = 'configured'; Project = 'Navalia'; TokenPresent = $true }
+    $lane = & $modeScript -DryRun @common -Policy release-signing
+    if ($lane.Mode -ne 'Test' -or $lane.Policy -ne 'test-signing') { throw 'Dry-run runs must always be tests.' }
+    Write-Host 'PASS: dry-run uses only test-signing, even with production configured'
+    $lane = & $modeScript -Version 0.1.17
     if ($lane.Mode -ne 'Unsigned') { throw 'Unsigned release compatibility lost.' }
-    Write-Host 'PASS: absent organization preserves unsigned tag releases'
-    $lane = & $modeScript -EventName push @common -Policy release-signing -ProductionThumbprint $prodPin
+    Write-Host 'PASS: absent organization preserves unsigned releases'
+    $lane = & $modeScript @common -Policy release-signing -ProductionThumbprint $prodPin
     if ($lane.Mode -ne 'Production') { throw 'Production lane missing.' }
-    Write-Host 'PASS: configured production tag uses production lane'
-    Assert-Rejected 'test policy on public release' { & $modeScript -EventName push @common -Policy test-signing } '*public release requires*'
-    Assert-Rejected 'unknown policy on public release' { & $modeScript -EventName push @common -Policy typo } '*public release requires*'
-    Assert-Rejected 'missing production pin' { & $modeScript -EventName push @common -Policy release-signing } '*production certificate thumbprint*'
-    Assert-Rejected 'test certificate as production pin' { & $modeScript -EventName push @common -Policy release-signing -ProductionThumbprint $testPin } '*production certificate thumbprint*'
-    Assert-Rejected 'test without configuration' { & $modeScript -EventName workflow_dispatch -Version 0.1.17 } '*Configure SIGNPATH*'
-    Assert-Rejected 'tag mismatch' { & $modeScript -EventName push -Version 0.1.17 -RefName v0.1.16 } '*does not match*'
+    Write-Host 'PASS: configured production release uses production lane'
+    Assert-Rejected 'test policy on public release' { & $modeScript @common -Policy test-signing } '*public release requires*'
+    Assert-Rejected 'unknown policy on public release' { & $modeScript @common -Policy typo } '*public release requires*'
+    Assert-Rejected 'missing production pin' { & $modeScript @common -Policy release-signing } '*production certificate thumbprint*'
+    Assert-Rejected 'test certificate as production pin' { & $modeScript @common -Policy release-signing -ProductionThumbprint $testPin } '*production certificate thumbprint*'
+    Assert-Rejected 'test without configuration' { & $modeScript -DryRun -Version 0.1.17 -Organization 'configured' } '*Configure SIGNPATH*'
     & $verifyScript -Mode Production -ProductionThumbprint $prodPin -Path $fixture -ReportDirectory $root
     $report = @(Get-Content (Join-Path $root 'signature-report.json') -Raw | ConvertFrom-Json)
     if ($report[0].sha256 -ne (Get-FileHash $fixture).Hash -or $report[0].status -ne 'Valid') { throw 'Verification report lost hash/status.' }
@@ -79,21 +78,14 @@ try {
     $state.missing = $true
     Assert-Rejected 'missing signer' { & $verifyScript -Mode Production -ProductionThumbprint $prodPin -Path $fixture } '*no Authenticode signature*'
     $workflow = Get-Content (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw
-    foreach ($name in @('Prepare release files', 'Create draft release')) {
-        if ($workflow -notmatch ("- name: " + [regex]::Escape($name) + "\r?\n        if: env.SIGNING_MODE != 'Test'")) {
-            throw "$name must exclude the test lane."
-        }
+    if ($workflow -notmatch 'uses:\s*projectGloria/GloriaSetup/\.github/workflows/app-release\.yml@main') {
+        throw 'release.yml must use the shared GloriaSetup app-release job.'
     }
-    if ($workflow -notmatch "- name: Sign the final production installer for the updater\r?\n        if: env.SIGNING_MODE == 'Production'") {
-        throw 'Test lane must never generate an updater signature.'
-    }
-    Write-Host 'PASS: tests cannot prepare release files, updater signatures or draft releases'
+    Write-Host 'PASS: release.yml delegates publishing to the shared GloriaSetup workflow'
     # A native verification call can wait on Windows UI or certificate services.
     # Bound every step containing one, independently of SignPath approval waits.
     foreach ($entry in @(
-        @{ Name = 'Verify both signed programs'; Minutes = 5 },
-        @{ Name = 'Rebuild the installer around the signed programs'; Minutes = 10 },
-        @{ Name = 'Verify and use the signed installer'; Minutes = 5 }
+        @{ Name = 'Verify both signed programs'; Minutes = 5 }
     )) {
         $block = "- name: " + [regex]::Escape($entry.Name) + "\r?\n        if: env.SIGNING_MODE != 'Unsigned'\r?\n        timeout-minutes: " + $entry.Minutes + "\r?\n"
         if ($workflow -notmatch $block) { throw "$($entry.Name) must have a bounded timeout." }

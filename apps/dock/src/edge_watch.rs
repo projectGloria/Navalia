@@ -21,7 +21,12 @@ pub const CHANGED: u32 = WM_APP + 26;
 const DWELL: Duration = Duration::from_millis(250);
 const MENU_DWELL: Duration = Duration::from_millis(150);
 const EDGE_DEPTH: i32 = 2;
-const SAMPLE_MS: u32 = 80;
+const NEAR_EDGE_PX: i32 = 64;
+const SAMPLE_ACTIVE_MS: u32 = 80;
+const SAMPLE_MOVING_MS: u32 = 160;
+const SAMPLE_IDLE_MS: u32 = 400;
+const SAMPLE_DORMANT_MS: u32 = 1_000;
+const IDLE_BACKOFF_AFTER: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {
@@ -82,6 +87,34 @@ impl Edges {
                 DockEdge::Right => point.x >= screen.right - EDGE_DEPTH,
             })
             .map(Target::Dock)
+    }
+
+    fn near_edge(&self, point: POINT, margin: i32) -> bool {
+        if self.top.is_some_and(|bar| {
+            (bar.left..bar.right).contains(&point.x)
+                && (bar.bottom - margin..bar.bottom + margin).contains(&point.y)
+        }) {
+            return true;
+        }
+        self.pointer_screen
+            .is_some_and(|screen| match self.dock_edge {
+                DockEdge::Bottom => point.y >= screen.bottom - margin,
+                DockEdge::Left => point.x < screen.left + margin,
+                DockEdge::Right => point.x >= screen.right - margin,
+            })
+    }
+
+    fn desired_interval_ms(&self, point: POINT, moved: bool, idle_for: Duration) -> u32 {
+        if self.top.is_none() && self.screens.is_empty() {
+            return SAMPLE_DORMANT_MS;
+        }
+        if self.target.is_some() || self.near_edge(point, NEAR_EDGE_PX) {
+            return SAMPLE_ACTIVE_MS;
+        }
+        if moved || idle_for < IDLE_BACKOFF_AFTER {
+            return SAMPLE_MOVING_MS;
+        }
+        SAMPLE_IDLE_MS
     }
 
     fn observe(&mut self, point: POINT, now: Instant) -> bool {
@@ -188,15 +221,22 @@ impl EdgeWatch {
                 unsafe {
                     let mut msg = MSG::default();
                     let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
-                    let timer = SetTimer(None, 0, SAMPLE_MS, None);
+                    let mut interval_ms = SAMPLE_ACTIVE_MS;
+                    let timer = SetTimer(None, 0, interval_ms, None);
                     if timer == 0 {
                         let _ = sender.send(Err(windows::core::Error::from_thread()));
                         return;
                     }
                     let _ = sender.send(Ok(GetCurrentThreadId()));
+                    let mut last_point = None;
+                    let mut last_move = Instant::now();
                     while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                         if msg.message == WM_TIMER {
-                            sample_cursor();
+                            let next_ms = sample_cursor(&mut last_point, &mut last_move);
+                            if next_ms != interval_ms {
+                                interval_ms = next_ms;
+                                SetTimer(None, timer, interval_ms, None);
+                            }
                         }
                     }
                     let _ = KillTimer(None, timer);
@@ -212,7 +252,9 @@ impl EdgeWatch {
             }
             result => {
                 let _ = join.join();
-                Err(anyhow::anyhow!("no se pudo observar el borde: {result:?}"))
+                Err(anyhow::anyhow!(
+                    "could not watch the screen edge: {result:?}"
+                ))
             }
         }
     }
@@ -237,14 +279,24 @@ impl Drop for EdgeWatch {
     }
 }
 
-fn sample_cursor() {
+fn sample_cursor(last_point: &mut Option<POINT>, last_move: &mut Instant) -> u32 {
     let mut point = POINT::default();
     // SAFETY: The output is live and this thread only reads cursor position.
     if unsafe { GetCursorPos(&mut point) }.is_err() {
-        return;
+        return SAMPLE_IDLE_MS;
     }
+    let now = Instant::now();
+    let moved = *last_point != Some(point);
+    if moved {
+        *last_point = Some(point);
+        *last_move = now;
+    }
+    let idle_for = now.saturating_duration_since(*last_move);
+    let mut next_ms = SAMPLE_ACTIVE_MS;
     let window = EDGES.try_lock().ok().and_then(|mut edges| {
-        (edges.window != 0 && edges.observe(point, Instant::now())).then_some(edges.window)
+        let notify = edges.window != 0 && edges.observe(point, now);
+        next_ms = edges.desired_interval_ms(point, moved, idle_for);
+        notify.then_some(edges.window)
     });
     if let Some(window) = window {
         // SAFETY: Post a scalar notification without waiting for the UI.
@@ -252,6 +304,7 @@ fn sample_cursor() {
             let _ = PostMessageW(Some(HWND(window as *mut _)), CHANGED, WPARAM(0), LPARAM(0));
         }
     }
+    next_ms
 }
 #[cfg(test)]
 mod tests {
@@ -471,5 +524,34 @@ mod tests {
             edges.dwell(POINT { x: 800, y: 0 }, start + DWELL),
             Reveal::Idle
         ));
+    }
+
+    #[test]
+    fn polling_interval_backs_off_when_idle_or_disabled() {
+        let mut edges = Edges::default();
+        let screen = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        assert_eq!(
+            edges.desired_interval_ms(POINT { x: 500, y: 500 }, false, Duration::from_secs(10)),
+            SAMPLE_DORMANT_MS
+        );
+        edges.set_screens(vec![screen], DockEdge::Bottom);
+        edges.observe(POINT { x: 500, y: 500 }, Instant::now());
+        assert_eq!(
+            edges.desired_interval_ms(POINT { x: 500, y: 500 }, true, Duration::ZERO),
+            SAMPLE_MOVING_MS
+        );
+        assert_eq!(
+            edges.desired_interval_ms(POINT { x: 500, y: 500 }, false, Duration::from_secs(3)),
+            SAMPLE_IDLE_MS
+        );
+        assert_eq!(
+            edges.desired_interval_ms(POINT { x: 500, y: 1050 }, false, Duration::from_secs(3)),
+            SAMPLE_ACTIVE_MS
+        );
     }
 }

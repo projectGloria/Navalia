@@ -54,8 +54,9 @@ fn main() {
     // (ordinal 381) instead of failing on comctl32 v5 (issue #23).
     resources.set_manifest(MANIFEST);
     if let Err(error) = resources.compile() {
-        // The icon and manifest are cosmetic during non-Windows builds or missing rc:
-        // a missing resource compiler must not block the build.
-        println!("cargo:warning=no se pudieron incrustar los recursos: {error}");
+        if std::env::var("PROFILE").as_deref() == Ok("release") {
+            panic!("could not embed Windows resources (icon and manifest): {error}");
+        }
+        println!("cargo:warning=could not embed Windows resources: {error}");
     }
 }

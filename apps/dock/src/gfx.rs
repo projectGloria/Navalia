@@ -133,7 +133,7 @@ impl Gfx {
                 None,
                 None,
             )?;
-            let d3d = d3d.context("Direct3D no devolvió un dispositivo")?;
+            let d3d = d3d.context("Direct3D did not return a device")?;
             let dxgi: IDXGIDevice = d3d.cast()?;
             let d2d = D2D1CreateDevice(&dxgi, None)?;
             let graphics = compositor

@@ -227,9 +227,9 @@ unsafe extern "system" fn expired(context: *mut std::ffi::c_void, _: bool) {
 
 /// The kernel also cleans up an idle helper if the dock crashes or is killed.
 /// Only the reader thread owns this non-inherited job handle.
-struct WorkerJob(HANDLE);
+pub(crate) struct WorkerJob(HANDLE);
 impl WorkerJob {
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         // SAFETY: Own unnamed job; closing its sole handle terminates its children.
         unsafe {
             let job = Self(CreateJobObjectW(None, None)?);
@@ -243,6 +243,13 @@ impl WorkerJob {
             )?;
             Ok(job)
         }
+    }
+}
+impl WorkerJob {
+    /// Puts `child` in the job, so closing the job ends it.
+    pub(crate) fn assign(&self, child: &Child) -> windows::core::Result<()> {
+        // SAFETY: Both handles are owned and alive for the call.
+        unsafe { AssignProcessToJobObject(self.0, HANDLE(child.as_raw_handle())) }
     }
 }
 impl Drop for WorkerJob {

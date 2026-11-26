@@ -279,7 +279,7 @@ pub fn run(visibility: Option<&str>) -> Result<()> {
     let _aep = watch(Source::Endpoint, tx.clone(), full.clone())?;
     let _nodes = watch(Source::Node, tx.clone(), full.clone())?;
     let _usb = watch(Source::Usb, tx.clone(), full.clone())
-        .inspect_err(|_| eprintln!("navalia: USB accessory discovery unavailable"))
+        .inspect_err(|_| navalia_shell::log::line("USB accessory discovery unavailable"))
         .ok();
     let mut usb = usb::Sources::default();
     let (mut endpoints, mut nodes) = (BTreeMap::new(), BTreeMap::new());

@@ -82,17 +82,17 @@ fn main() -> Result<()> {
             Ok(())
         }
         ["--autostart", "on"] => {
-            let exe = env::current_exe().context("no se pudo localizar navalia.exe")?;
+            let exe = env::current_exe().context("could not locate navalia.exe")?;
             Ok(autostart::set(Some(&exe.to_string_lossy()))?)
         }
         ["--autostart", "off"] => Ok(autostart::set(None)?),
-        [guard::FLAG, pid] => guard::run(pid.parse().context("pid no válido")?),
+        [guard::FLAG, pid] => guard::run(pid.parse().context("invalid pid")?),
         ["--usage-worker"] => usage::worker_main(),
         [accessories::FLAG] => accessories::worker_main(None),
         [accessories::FLAG, visibility] => accessories::worker_main(Some(visibility)),
         [accessories::USB_FLAG] => accessories::usb_worker_main(),
         [shell_work::FLAG] => shell_work::worker_main(),
-        _ => bail!("uso: navalia [--quit | --restore | --autostart on|off]"),
+        _ => bail!("usage: navalia [--quit | --restore | --autostart on|off]"),
     }
 }
 
@@ -108,7 +108,7 @@ fn run_dock(recovered: bool) -> Result<()> {
     recovery::configure(recovered);
     let startup = std::time::Instant::now();
     navalia_shell::log::line(concat!(
-        "proceso iniciado, versión ",
+        "process started, version ",
         env!("CARGO_PKG_VERSION")
     ));
     // Keep the recovery channel alive through startup errors and final cleanup.
@@ -117,7 +117,7 @@ fn run_dock(recovered: bool) -> Result<()> {
     if let Err(error) = &result {
         recovery::graphics_error(error);
         navalia_shell::log::line(&format!(
-            "el dock falló tras {} ms desde el inicio del proceso: {error:#}",
+            "dock failed {} ms after process start: {error:#}",
             startup.elapsed().as_millis()
         ));
     }
@@ -140,9 +140,14 @@ fn initialize_dock() -> Result<()> {
         })?
     };
 
-    // Moves the `Run` autostart of 0.1.9-0.1.10 to the logon task, off the UI thread.
+    // Enable autostart once on first run, and migrate any legacy Run/task entry.
     let _ = std::thread::Builder::new()
         .name("navalia-autostart".into())
-        .spawn(autostart::migrate);
+        .spawn(|| {
+            if let Ok(exe) = env::current_exe() {
+                autostart::ensure_first_run_enabled(&exe.to_string_lossy());
+            }
+            autostart::migrate();
+        });
     app::run()
 }

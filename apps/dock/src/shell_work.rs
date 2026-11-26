@@ -168,7 +168,7 @@ impl<T: Send + 'static> Queue<T> {
     fn submit(&self, job: T) -> Result<()> {
         self.sender
             .try_send(job)
-            .map_err(|_| anyhow::anyhow!("la cola del shell está llena o no está disponible"))
+            .map_err(|_| anyhow::anyhow!("the shell queue is full or unavailable"))
     }
 }
 
@@ -181,7 +181,7 @@ impl Workers {
     fn new() -> Result<Self> {
         let execute = |action| {
             if let Err(error) = start_helper(action) {
-                eprintln!("navalia: operación del shell: {error:#}");
+                navalia_shell::log::line(&format!("shell operation: {error:#}"));
             }
         };
         Ok(Self {
@@ -245,7 +245,7 @@ fn start_helper(action: Action) -> Result<()> {
     let timeout = action.launch_timeout_ms();
     let input = serde_json::to_vec(&action)?;
     if input.len() as u64 > MAX_REQUEST_BYTES {
-        bail!("la operación contiene demasiados datos");
+        bail!("the operation payload is too large");
     }
     let mut child = Command::new(env::current_exe()?)
         .arg(FLAG)
@@ -256,7 +256,7 @@ fn start_helper(action: Action) -> Result<()> {
         .stderr(Stdio::inherit())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .context("no se pudo iniciar el auxiliar del shell")?;
+        .context("could not start the shell helper")?;
     // SAFETY: Give this child the foreground right granted by the dock click.
     unsafe {
         let _ = AllowSetForegroundWindow(child.id());
@@ -274,14 +274,14 @@ fn start_helper(action: Action) -> Result<()> {
         // Transfers and UAC are exempt from this deadline.
         child
             .kill()
-            .context("no se pudo cerrar el auxiliar de apertura atascado")?;
+            .context("could not stop the stalled launch helper")?;
     }
     let status = child.wait()?;
     if timed_out {
-        bail!("el shell no respondió a la apertura en 30 segundos");
+        bail!("the shell did not respond to open within 30 seconds");
     }
     if !status.success() {
-        bail!("el auxiliar del shell terminó con {status}");
+        bail!("the shell helper exited with {status}");
     }
     Ok(())
 }
@@ -290,7 +290,7 @@ fn read_action(input: impl Read) -> Result<Action> {
     let mut bytes = Vec::new();
     input.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_REQUEST_BYTES {
-        bail!("la operación contiene demasiados datos");
+        bail!("the operation payload is too large");
     }
     Ok(serde_json::from_slice(&bytes)?)
 }
@@ -402,7 +402,7 @@ mod tests {
         };
         let parsed = read_action(serde_json::to_vec(&action)?.as_slice())?;
         let Action::OpenJump { target, program } = parsed else {
-            bail!("la entrada de la lista de saltos cambió durante el transporte");
+            bail!("jump list item changed in transit");
         };
         assert_eq!(
             target,
@@ -438,7 +438,7 @@ mod tests {
                 assert_eq!(files, [r"C:\Origen\diseño final.txt"]);
                 assert!(copy);
             }
-            _ => bail!("la operación de copia cambió durante el transporte"),
+            _ => bail!("copy operation changed in transit"),
         }
         Ok(())
     }

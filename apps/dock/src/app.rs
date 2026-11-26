@@ -824,7 +824,7 @@ pub(crate) fn with_app_then(what: &str, action: impl FnOnce(&mut App) -> Result<
         // Modal calls run outside the borrow, so this should not happen. If it
         // does, discard the message rather than terminating the dock.
         let Ok(mut app) = cell.try_borrow_mut() else {
-            eprintln!("navalia: {what}: el dock estaba ocupado; se ignora");
+            navalia_shell::log::line(&format!("{what}: dock was busy; ignoring"));
             return None;
         };
         match app.as_mut().map(action) {

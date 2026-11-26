@@ -81,7 +81,9 @@ impl App {
                 .and_then(|visual| {
                     self.gfx
                         .icon_brush(&visual.icon, side.min(visual.icon.width))
-                        .inspect_err(|error| eprintln!("navalia: icono de `{app}`: {error:#}"))
+                        .inspect_err(|error| {
+                            navalia_shell::log::line(&format!("icon `{app}`: {error:#}"));
+                        })
                         .ok()
                 })
                 .or_else(|| self.placeholder.clone());
@@ -143,7 +145,9 @@ impl App {
             .or_else(|| self.placeholder.clone());
         self.ghost = brush.and_then(|brush| {
             DragGhost::show(&self.gfx, &brush, side, point)
-                .inspect_err(|error| eprintln!("navalia: icono arrastrado: {error:#}"))
+                .inspect_err(|error| {
+                    navalia_shell::log::line(&format!("dragged icon: {error:#}"));
+                })
                 .ok()
         });
         self.press = None;

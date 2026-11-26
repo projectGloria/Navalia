@@ -3,7 +3,7 @@
 use std::{
     env,
     fs::{self, File, TryLockError},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -14,22 +14,28 @@ use thiserror::Error;
 
 pub const CURRENT_VERSION: u32 = 1;
 
+/// How long a writer waits for another one to finish.
+const LOCK_WAIT: Duration = Duration::from_millis(500);
+
 /// Error reading or saving the configuration.
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("no se pudo acceder a `{path}`")]
+    #[error("could not access `{path}`: {source}")]
     Io {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("`{path}` no es una configuración válida")]
+    #[error("`{path}` is not a valid configuration: {source}")]
     Parse {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("no se pudo serializar la configuración")]
+    /// A change from Settings has a value of the wrong type.
+    #[error("invalid setting value: {0}")]
+    InvalidChange(#[source] serde_json::Error),
+    #[error("could not serialize the configuration: {0}")]
     Serialize(#[from] serde_json::Error),
 }
 
@@ -168,8 +174,6 @@ pub struct DockGroup {
     pub apps: Vec<String>,
 }
 
-/// Speed of the genie. Three steps, not a slider: a duration in milliseconds
-/// would ask the user to guess, and these three cover what anyone asked for.
 /// The screen edge the dock sits on: the three macOS offers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -199,6 +203,8 @@ pub enum MascotCharacter {
     Crab,
 }
 
+/// Speed of the genie. Three steps, not a slider: a duration in milliseconds
+/// would ask the user to guess, and these three cover what anyone asked for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GenieSpeed {
@@ -448,18 +454,43 @@ impl Default for Config {
 
 /// Moves the settings folder from before the app was renamed to Navalia.
 pub fn migrate_legacy_folder() {
-    let roaming = PathBuf::from(env::var_os("APPDATA").unwrap_or_default());
+    let roaming = roaming_folder();
     let (old, new) = (roaming.join("WinDock"), roaming.join("Navalia"));
     if old.is_dir() && !new.exists() {
         let _ = fs::rename(old, new);
     }
 }
 
+/// `%APPDATA%`, or its usual place under the profile when the variable is
+/// missing (a stripped environment), never a path relative to the current
+/// folder.
+#[must_use]
+pub fn roaming_folder() -> PathBuf {
+    known_folder("APPDATA", &["AppData", "Roaming"])
+}
+
+fn known_folder(variable: &str, under_profile: &[&str]) -> PathBuf {
+    let absolute = |value: std::ffi::OsString| {
+        let path = PathBuf::from(value);
+        path.is_absolute().then_some(path)
+    };
+    env::var_os(variable)
+        .and_then(absolute)
+        .or_else(|| {
+            env::var_os("USERPROFILE")
+                .and_then(absolute)
+                .map(|profile| {
+                    under_profile
+                        .iter()
+                        .fold(profile, |path, part| path.join(part))
+                })
+        })
+        .unwrap_or_else(env::temp_dir)
+}
+
 #[must_use]
 pub fn default_path() -> PathBuf {
-    PathBuf::from(env::var_os("APPDATA").unwrap_or_default())
-        .join("Navalia")
-        .join("config.json")
+    roaming_folder().join("Navalia").join("config.json")
 }
 
 /// Reads the configuration. Returns `Ok(None)` if the file does not exist yet.
@@ -495,7 +526,13 @@ pub fn update(
     edit: impl FnOnce(Option<Config>) -> Result<Config, ConfigError>,
 ) -> Result<Config, ConfigError> {
     let _lock = lock_for_write(path)?;
-    let config = edit(load(path)?)?.sanitized();
+    // A damaged file starts from the last backup (or the defaults) instead of
+    // blocking every later change; `write_config` keeps the damaged copy.
+    let saved = match load_or_recover(path) {
+        Err(ConfigError::Parse { .. }) => None,
+        other => other?,
+    };
+    let config = edit(saved)?.sanitized();
     write_config(path, &config)?;
     Ok(config)
 }
@@ -520,10 +557,7 @@ pub fn update_preferences(
                 }
             }
         }
-        serde_json::from_value(fields).map_err(|source| ConfigError::Parse {
-            path: path.to_owned(),
-            source,
-        })
+        serde_json::from_value(fields).map_err(ConfigError::InvalidChange)
     })
 }
 
@@ -548,17 +582,38 @@ fn lock_for_write(path: &Path) -> Result<File, ConfigError> {
     loop {
         match lock.try_lock() {
             Ok(()) => return Ok(lock),
-            Err(TryLockError::WouldBlock) if start.elapsed() < Duration::from_millis(80) => {
+            // A write takes milliseconds; wait long enough to ride out a slow
+            // disk or an antivirus scan without stalling the caller for long.
+            Err(TryLockError::WouldBlock) if start.elapsed() < LOCK_WAIT => {
                 thread::sleep(Duration::from_millis(4));
             }
             Err(TryLockError::WouldBlock) => {
                 return Err(io_error(io::Error::new(
                     io::ErrorKind::WouldBlock,
-                    "Ajustes y el dock están guardando la configuración",
+                    "Settings and the dock are both saving the configuration",
                 )));
             }
             Err(TryLockError::Error(error)) => return Err(io_error(error)),
         }
+    }
+}
+
+/// The last configuration that was replaced while it still read correctly.
+#[must_use]
+pub fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+/// Like [`load`], but a damaged file falls back to the last good backup.
+/// The damaged file is left in place so the user can still repair it; the
+/// next write keeps a copy of it next to the configuration.
+pub fn load_or_recover(path: &Path) -> Result<Option<Config>, ConfigError> {
+    match load(path) {
+        Err(error @ ConfigError::Parse { .. }) => match load(&backup_path(path)) {
+            Ok(Some(backup)) => Ok(Some(backup)),
+            _ => Err(error),
+        },
+        other => other,
     }
 }
 
@@ -568,7 +623,25 @@ fn write_config(path: &Path, config: &Config) -> Result<(), ConfigError> {
         source,
     };
     let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, serde_json::to_string_pretty(config)?).map_err(io_error)?;
+    {
+        let mut file = File::create(&temporary).map_err(io_error)?;
+        file.write_all(serde_json::to_string_pretty(config)?.as_bytes())
+            .map_err(io_error)?;
+        // Flush to disk before the rename, so a power cut leaves either the
+        // old file or the new one, never an empty or partial one.
+        file.sync_all().map_err(io_error)?;
+    }
+    // Keep the previous version when it still reads correctly; a damaged one
+    // is kept aside instead of being lost.
+    match load(path) {
+        Ok(Some(_)) => {
+            let _ = fs::copy(path, backup_path(path));
+        }
+        Err(ConfigError::Parse { .. }) => {
+            let _ = fs::copy(path, path.with_extension("json.damaged"));
+        }
+        _ => {}
+    }
     fs::rename(&temporary, path).map_err(io_error)
 }
 
@@ -1067,6 +1140,52 @@ mod tests {
         save(&path, &Config::default()).ok();
         fs::write(&path, "esto no es json").ok();
         assert!(matches!(load(&path), Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn a_damaged_file_recovers_from_the_backup_and_stays_writable() -> Result<(), ConfigError> {
+        let path = scratch("recover");
+        let first = Config {
+            icon_size: 40,
+            ..Config::default()
+        };
+        save(&path, &first)?;
+        // The second save keeps the first as the backup.
+        save(
+            &path,
+            &Config {
+                icon_size: 50,
+                ..Config::default()
+            },
+        )?;
+        let io = |source| ConfigError::Io {
+            path: path.clone(),
+            source,
+        };
+        fs::write(&path, "not json").map_err(io)?;
+        assert_eq!(load_or_recover(&path)?, Some(first.sanitized()));
+        // A Settings change applies on top of what the window shows.
+        let patch = serde_json::Map::from_iter([("showTrash".into(), false.into())]);
+        let saved = update_preferences(&path, patch)?;
+        assert_eq!(saved.icon_size, 40);
+        assert!(!saved.show_trash);
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.damaged")).map_err(io)?,
+            "not json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrongly_typed_change_is_not_blamed_on_the_file() -> Result<(), ConfigError> {
+        let path = scratch("wrong-type");
+        save(&path, &Config::default())?;
+        let patch = serde_json::Map::from_iter([("iconSize".into(), "big".into())]);
+        assert!(matches!(
+            update_preferences(&path, patch),
+            Err(ConfigError::InvalidChange(_))
+        ));
+        Ok(())
     }
 
     #[test]

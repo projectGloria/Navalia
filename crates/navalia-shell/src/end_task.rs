@@ -10,11 +10,9 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0},
-        Storage::Packaging::Appx::GetApplicationUserModelId,
         System::Threading::{
-            GetCurrentProcessId, IsProcessCritical, OpenProcess, PROCESS_NAME_WIN32,
-            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-            QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+            GetCurrentProcessId, IsProcessCritical, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
         },
         UI::WindowsAndMessaging::{
             EnumWindows, GW_OWNER, GWL_EXSTYLE, GetShellWindow, GetWindow, GetWindowLongW,
@@ -22,7 +20,7 @@ use windows::{
             WS_EX_TOOLWINDOW,
         },
     },
-    core::{BOOL, PWSTR},
+    core::BOOL,
 };
 
 use crate::tracker::{self, TrackedWindow};
@@ -128,18 +126,7 @@ impl PreparedEndTask {
             if critical.as_bool() {
                 return None;
             }
-            let mut image = [0u16; 1024];
-            let mut len = image.len() as u32;
-            unsafe {
-                QueryFullProcessImageNameW(
-                    raw,
-                    PROCESS_NAME_WIN32,
-                    PWSTR(image.as_mut_ptr()),
-                    &mut len,
-                )
-            }
-            .ok()?;
-            let image = String::from_utf16_lossy(&image[..len as usize]);
+            let image = crate::paths::query_process_image(raw)?;
             if shared_host(&image)
                 || image
                     .rsplit('\\')
@@ -151,17 +138,8 @@ impl PreparedEndTask {
             // Query process identity directly. A property-store/COM request to
             // a hung window must never delay opening its recovery menu.
             let identity = if app.starts_with("shell:AppsFolder\\") {
-                let mut aumid = [0u16; 1024];
-                len = aumid.len() as u32;
-                unsafe {
-                    GetApplicationUserModelId(raw, &mut len, Some(PWSTR(aumid.as_mut_ptr())))
-                }
-                .ok()
-                .ok()?;
-                format!(
-                    "shell:AppsFolder\\{}",
-                    String::from_utf16_lossy(&aumid[..len.saturating_sub(1) as usize])
-                )
+                let aumid = crate::paths::query_process_aumid(raw)?;
+                format!("shell:AppsFolder\\{aumid}")
             } else {
                 tracker::normalize_id(&image)
             };

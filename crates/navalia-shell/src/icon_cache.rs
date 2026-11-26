@@ -9,7 +9,7 @@
 //!   most once per day.
 
 use std::{
-    env, fs,
+    fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -41,11 +41,7 @@ pub struct IconCache {
 
 impl Default for IconCache {
     fn default() -> Self {
-        Self::new(
-            PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default())
-                .join("Navalia")
-                .join("icons"),
-        )
+        Self::new(crate::paths::local_file("icons"))
     }
 }
 
@@ -228,7 +224,7 @@ mod tests {
 
     #[test]
     fn stamp_of_should_follow_file_modification_time() {
-        let file = env::temp_dir().join(format!("navalia-stamp-{}", std::process::id()));
+        let file = std::env::temp_dir().join(format!("navalia-stamp-{}", std::process::id()));
         let _ = fs::write(&file, b"x");
         let expected = fs::metadata(&file)
             .and_then(|meta| meta.modified())

@@ -133,14 +133,14 @@ pub(super) fn message_loop() {
                     }
                     DispatchMessageW(&msg);
                 }
-                with_app_then("animación", App::tick);
+                with_app_then("animation", App::tick);
                 // Wait for the next refresh to pace animation without timers.
                 let _ = DwmFlush();
             } else {
                 let status = GetMessageW(&mut msg, None, 0, 0);
                 if status.0 <= 0 {
                     if status.0 < 0 {
-                        eprintln!("navalia: error al leer la cola de mensajes de Windows");
+                        navalia_shell::log::line("error reading Windows message queue");
                     }
                     return;
                 }
@@ -152,7 +152,7 @@ pub(super) fn message_loop() {
 
 pub fn run() -> Result<()> {
     let startup = Instant::now();
-    navalia_shell::log::line(concat!("inicio, versión ", env!("CARGO_PKG_VERSION")));
+    navalia_shell::log::line(concat!("started, version ", env!("CARGO_PKG_VERSION")));
     let gfx = Gfx::new()?.with_error_handler(crate::recovery::graphics_error);
     // SAFETY: The thread is already a single-threaded COM apartment (see
     // `main`); OLE adds drag and drop on top of it and is released at the end.
@@ -307,7 +307,7 @@ pub fn run() -> Result<()> {
         }
         // Pins and unpins made on the Windows taskbar while Navalia was closed.
         if let Err(error) = app.sync_taskbar_pins() {
-            eprintln!("navalia: apps fijadas de la barra de Windows: {error:#}");
+            navalia_shell::log::line(&format!("Windows taskbar pins: {error:#}"));
         }
         app.sync()?;
         // `sync` recomposes only when the list changes; run it unconditionally at startup.
@@ -319,7 +319,7 @@ pub fn run() -> Result<()> {
         app.apply_menu_bar_setting();
         // Otherwise the bar shows no app name until the user switches windows.
         if let Err(error) = app.update_menu_bar_app() {
-            eprintln!("navalia: barra superior: {error:#}");
+            navalia_shell::log::line(&format!("menu bar: {error:#}"));
         }
 
         // The shell notifies this window when a window is created, closed,
@@ -467,9 +467,9 @@ impl App {
         }
     }
 
-    /// Starts the background update: Settings without a window, which does
-    /// the network part and exits when there is nothing to install. The
-    /// dock itself never touches the network.
+    /// Starts the background update: Settings without a window, which handles
+    /// update checks and downloads. (The dock's own `--usage-worker` handles
+    /// optional AI provider usage queries separately.)
     pub(super) fn update_now(&mut self) {
         // SAFETY: Our own timer.
         unsafe {
@@ -495,7 +495,7 @@ impl App {
         if let Some(settings) = settings
             && let Err(error) = std::process::Command::new(settings).arg("--update").spawn()
         {
-            eprintln!("navalia: actualización: {error}");
+            navalia_shell::log::line(&format!("update check launch failed: {error}"));
         }
     }
 
@@ -589,7 +589,7 @@ impl App {
                 }
             } else {
                 navalia_shell::log::line(
-                    "barra de Windows pendiente tras 50 intentos; se reintentará al reiniciarse Explorer o reanudar Windows",
+                    "Windows taskbar still pending after 50 attempts; will retry when Explorer restarts or Windows resumes",
                 );
             }
             return Ok(());

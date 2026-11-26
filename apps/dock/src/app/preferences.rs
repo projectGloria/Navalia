@@ -33,7 +33,7 @@ pub(super) fn explorer_id() -> String {
 /// the Windows taskbar.
 pub(super) fn load_config() -> Config {
     let path = navalia_config::default_path();
-    match navalia_config::load(&path) {
+    match navalia_config::load_or_recover(&path) {
         Ok(Some(config)) => config,
         Ok(None) => {
             let pins = taskbar_pins();
@@ -46,14 +46,15 @@ pub(super) fn load_config() -> Config {
             {
                 Ok(saved) => saved,
                 Err(error) => {
-                    eprintln!("navalia: {error}");
+                    navalia_shell::log::line(&format!("{error}"));
                     config
                 }
             }
         }
         Err(error) => {
-            // Do not overwrite it; the user may want to repair the file.
-            eprintln!("navalia: {error}; se usan los valores por defecto");
+            // Damaged with no usable backup. Do not overwrite it here; the
+            // next save keeps a `.damaged` copy for the user to repair.
+            navalia_shell::log::line(&format!("{error}; using the defaults"));
             Config::default()
         }
     }
@@ -95,7 +96,7 @@ pub(super) fn roster_from(config: &Config) -> Roster {
 
 pub(super) fn save_settings(roster: &Roster, config: &Config) {
     if let Err(error) = save_dock_config(&navalia_config::default_path(), roster, config, false) {
-        eprintln!("navalia: {error}");
+        navalia_shell::log::line(&format!("could not save the dock: {error:#}"));
     }
 }
 
@@ -162,7 +163,8 @@ impl App {
     pub(super) fn reload_config(&mut self) -> Result<()> {
         self.close_preview();
         self.close_group_view();
-        let Ok(Some(saved)) = navalia_config::load(&navalia_config::default_path()) else {
+        let Ok(Some(saved)) = navalia_config::load_or_recover(&navalia_config::default_path())
+        else {
             return Ok(());
         };
         // Pinned and recent apps belong to the dock; the settings app only
@@ -333,7 +335,7 @@ impl App {
                 self.config.menu_bar_auto_hide,
                 widgets,
             )
-            .inspect_err(|error| eprintln!("navalia: barra superior: {error:#}"))
+            .inspect_err(|error| navalia_shell::log::line(&format!("menu bar: {error:#}")))
             .ok();
         }
         if let Some(bar) = &mut self.menubar {
@@ -353,7 +355,7 @@ impl App {
                     bar.set_accessories_enabled(&self.gfx, self.config.accessory_battery)
                 });
             if let Err(error) = applied {
-                eprintln!("navalia: barra superior: {error:#}");
+                navalia_shell::log::line(&format!("menu bar: {error:#}"));
             }
         }
         self.apply_edge_settings();

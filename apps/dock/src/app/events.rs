@@ -182,7 +182,7 @@ pub fn menu_bar_monitor_tick() {
 }
 
 pub fn menu_bar_media_changed() {
-    with_app("reproducción", |app| match &mut app.menubar {
+    with_app("playback", |app| match &mut app.menubar {
         Some(bar) => bar.media_changed(&app.gfx),
         None => Ok(()),
     });
@@ -306,7 +306,7 @@ pub fn multi_window_view_middle_click() {
 }
 
 pub fn multi_window_view_scroll(previous: bool) {
-    with_app("más ventanas", |app| {
+    with_app("more windows", |app| {
         if let Some(view) = &mut app.preview {
             view.scroll(&app.gfx, previous)?;
         }
@@ -315,14 +315,14 @@ pub fn multi_window_view_scroll(previous: bool) {
 }
 
 pub fn multi_window_view_dismiss() {
-    with_app("cerrar vistas", |app| {
+    with_app("dismiss views", |app| {
         app.close_preview();
         app.render()
     });
 }
 
 pub fn group_view_tick() {
-    with_app("grupo", |app| {
+    with_app("group", |app| {
         if let Some(view) = &mut app.group_view
             && !view.tick()?
         {
@@ -340,26 +340,26 @@ pub fn group_view_tick() {
 }
 
 pub fn group_view_press() {
-    with_app("grupo", |app| match &mut app.group_view {
+    with_app("group", |app| match &mut app.group_view {
         Some(view) => view.press(),
         None => Ok(()),
     });
 }
 
 pub fn group_view_moved() {
-    with_app("arrastre desde un grupo", App::group_view_moved);
+    with_app("drag from group", App::group_view_moved);
 }
 
 pub fn group_view_release() {
-    with_app_then("abrir desde un grupo", App::group_view_released);
+    with_app_then("open from group", App::group_view_released);
 }
 
 pub fn group_view_menu() {
-    with_app_then("menú de un grupo", App::group_view_menu);
+    with_app_then("group menu", App::group_view_menu);
 }
 
 pub fn group_view_press_lost() {
-    with_app("grupo", |app| {
+    with_app("group", |app| {
         if let Some(view) = &mut app.group_view {
             view.cancel_press();
         }
@@ -459,15 +459,13 @@ pub(super) unsafe extern "system" fn wndproc(
     match msg {
         BACKDROP_REFRESH => {
             BACKDROP_PENDING.store(false, Ordering::Relaxed);
-            with_app("cristal del fondo de pantalla", App::refresh_backdrops);
+            with_app("wallpaper backdrop", App::refresh_backdrops);
         }
-        HEALTH_CHECK => with_app("estado del dispositivo gráfico", |app| {
-            app.gfx.check_device()
-        }),
+        HEALTH_CHECK => with_app("graphics device status", |app| app.gfx.check_device()),
         WM_MOUSEACTIVATE => {
             let mouse = ((l.0 >> 16) & 0xFFFF) as u32;
             let activate = matches!(mouse, WM_LBUTTONDOWN | WM_MBUTTONDOWN)
-                && with_app_value("activación por clic", |app| {
+                && with_app_value("click activation", |app| {
                     Ok(hwnd == app.input && app.activate_for_pointer())
                 });
             // This is Windows' actual pointer activation negotiation. Preserve
@@ -485,9 +483,9 @@ pub(super) unsafe extern "system" fn wndproc(
             }
             with_app("iconos del shell", App::assets_ready);
         }
-        WM_MOUSEMOVE => with_app("movimiento del ratón", App::on_mouse_move),
-        WM_MOUSELEAVE => with_app("salida del ratón", App::on_tracked_mouse_leave),
-        WM_LBUTTONDOWN => with_app("pulsación", App::on_press),
+        WM_MOUSEMOVE => with_app("mouse move", App::on_mouse_move),
+        WM_MOUSELEAVE => with_app("mouse leave", App::on_tracked_mouse_leave),
+        WM_LBUTTONDOWN => with_app("mouse press", App::on_press),
         WM_LBUTTONUP => with_app_then("clic", App::on_release),
         WM_MBUTTONUP => with_app_then("clic central", App::on_middle_click),
         WM_CAPTURECHANGED => {
@@ -505,7 +503,7 @@ pub(super) unsafe extern "system" fn wndproc(
         }
         WM_TIMER if w.0 == DRAG_TIMER => with_app_then("arrastre", App::poll_drag),
         DROP_RUN => with_app_then("soltar archivos", |app| Ok(app.pending_drop.take())),
-        WM_RBUTTONUP => with_app_then("menú", App::on_right_click),
+        WM_RBUTTONUP => with_app_then("menu", App::on_right_click),
         BIN_STATE => with_app("papelera", |app| app.set_bin_full(w.0 != 0)),
         TASKBAR_PREFS_CHANGED => {
             with_app("preferencias de badges", App::taskbar_preferences_changed)
@@ -585,7 +583,7 @@ pub(super) unsafe extern "system" fn wndproc(
             with_app("apps fijadas", App::sync_taskbar_pins);
         }
         WM_TIMER if w.0 == UPDATE_TIMER => {
-            with_app("actualización", |app| {
+            with_app("refresh", |app| {
                 app.update_now();
                 Ok(())
             });
@@ -617,7 +615,7 @@ pub(super) unsafe extern "system" fn wndproc(
             unsafe {
                 let _ = KillTimer(Some(hwnd), w.0);
             }
-            with_app("ocultación", App::hide_if_unused);
+            with_app("auto-hide", App::hide_if_unused);
         }
         WM_TIMER if w.0 == TRIM_TIMER => {
             // SAFETY: `hwnd` is this live window on its owning UI thread.
@@ -635,7 +633,7 @@ pub(super) unsafe extern "system" fn wndproc(
                 let _ = KillTimer(Some(hwnd), w.0);
             }
             match w.0 {
-                REFRESH_TIMER => with_app("recomposición del dock", |app| {
+                REFRESH_TIMER => with_app("dock layout", |app| {
                     app.apply_edge_settings();
                     app.refresh()?;
                     app.update_fullscreen()?;
@@ -665,7 +663,7 @@ pub(super) unsafe extern "system" fn wndproc(
             // SAFETY: `hwnd` is this live window on its owning UI thread.
             unsafe { SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None) };
             // Timers do not count the time asleep: aim it again by the clock.
-            with_app("actualización", |app| {
+            with_app("refresh", |app| {
                 app.schedule_update();
                 Ok(())
             });
@@ -706,7 +704,7 @@ pub(super) unsafe extern "system" fn wndproc(
             HSHELL_LANGUAGE => menu_bar_refresh(),
             code => {
                 if code == HSHELL_FLASH {
-                    with_app("aviso de atención", |app| app.on_attention(l.0));
+                    with_app("attention notice", |app| app.on_attention(l.0));
                 } else if code == HSHELL_WINDOWDESTROYED {
                     with_app("ventana cerrada", |app| app.forget_attention(l.0));
                 }

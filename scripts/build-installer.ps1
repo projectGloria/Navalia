@@ -1,41 +1,33 @@
-# Builds the one-step installer: Navalia_<version>_x64-setup.exe.
+# Builds the GloriaSetup installer: dist/Navalia_<version>_x64-setup.exe.
 # Usage: scripts/build-installer.ps1   (from any folder)
-#
-# With TAURI_SIGNING_PRIVATE_KEY (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD) set,
-# it also writes the updater signature (<installer>.sig). Without them it
-# builds an unsigned installer, fine for local testing.
 
-# Not 'Stop': Windows PowerShell turns cargo's progress on stderr into errors;
-# each native step checks $LASTEXITCODE instead.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
-    $target = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).target_directory
-    $triple = 'x86_64-pc-windows-msvc'
-
-    cargo build --release -p navalia
-    if ($LASTEXITCODE) { throw 'cargo build navalia failed' }
-
-    # Tauri bundles sidecars from src-tauri/binaries/<name>-<target triple>.exe.
-    $binaries = Join-Path $root 'apps/settings/src-tauri/binaries'
-    New-Item -ItemType Directory -Force $binaries -ErrorAction Stop | Out-Null
-    Copy-Item (Join-Path $target 'release/navalia.exe') (Join-Path $binaries "navalia-$triple.exe") -Force -ErrorAction Stop
-
-    $configs = @('--config', 'src-tauri/tauri.bundle.conf.json')
-    if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-        Write-Warning 'TAURI_SIGNING_PRIVATE_KEY is not set: building without the updater signature.'
-        $unsigned = Join-Path $env:TEMP 'navalia-unsigned.conf.json'
-        '{ "bundle": { "createUpdaterArtifacts": false } }' | Set-Content -Encoding ascii $unsigned
-        $configs += @('--config', $unsigned)
-    }
+    $meta = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+    $target = $meta.target_directory
+    $version = ($meta.packages | Where-Object name -eq 'navalia' | Select-Object -ExpandProperty version)
 
     Push-Location (Join-Path $root 'apps/settings')
     try {
-        pnpm tauri build @configs
-        if ($LASTEXITCODE) { throw 'tauri build failed' }
+        npx tsc --noEmit
+        if ($LASTEXITCODE) { throw 'tsc failed' }
+        npx vite build
+        if ($LASTEXITCODE) { throw 'vite build failed' }
     } finally { Pop-Location }
 
-    Get-ChildItem (Join-Path $target 'release/bundle/nsis/*-setup.exe*') |
+    cargo build --release -p navalia -p navalia-settings
+    if ($LASTEXITCODE) { throw 'cargo build failed' }
+
+    $stage = Join-Path $root 'stage'
+    New-Item -ItemType Directory -Force $stage -ErrorAction Stop | Out-Null
+    Copy-Item (Join-Path $target 'release/navalia.exe') (Join-Path $stage 'navalia.exe') -Force -ErrorAction Stop
+    Copy-Item (Join-Path $target 'release/navalia-settings.exe') (Join-Path $stage 'navalia-settings.exe') -Force -ErrorAction Stop
+
+    npx --yes gloria-setup@latest --app $stage --manifest (Join-Path $root 'gloria.toml') --version $version --out (Join-Path $root 'dist')
+    if ($LASTEXITCODE) { throw 'gloria-setup failed' }
+
+    Get-ChildItem (Join-Path $root 'dist/*_x64-setup.exe') |
         Select-Object FullName, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
 } finally { Pop-Location }

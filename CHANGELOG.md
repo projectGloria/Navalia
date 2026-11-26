@@ -1,5 +1,8 @@
 # Changelog / Cambios
 
+Versions through `0.1.25` originate from the upstream Muelle project; issue
+numbers in those entries (`#65`, `#73`, etc.) refer to that history.
+
 Each release lists its changes in English and in Spanish. The release workflow
 copies the section of the version being published into the GitHub release.
 

@@ -33,10 +33,35 @@ use windows::{
 };
 
 #[derive(Debug, Error)]
-#[error("no se pudo abrir `{id}` (código {code} del shell)")]
+#[error("could not open `{id}` (shell code {code})")]
 pub struct LaunchError {
     id: String,
     code: isize,
+}
+
+/// Quotes one command-line argument according to Windows `CommandLineToArgvW`
+/// rules, so trailing backslashes (such as `C:\`) never escape the closing quote.
+#[must_use]
+pub(crate) fn quote_arg(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for ch in arg.chars() {
+        if ch == '\\' {
+            backslashes += 1;
+        } else if ch == '"' {
+            out.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+            out.push('"');
+            backslashes = 0;
+        } else {
+            out.extend(std::iter::repeat_n('\\', backslashes));
+            out.push(ch);
+            backslashes = 0;
+        }
+    }
+    out.extend(std::iter::repeat_n('\\', backslashes * 2));
+    out.push('"');
+    out
 }
 
 /// The dock never takes the focus, so Windows may refuse the foreground to the
@@ -90,7 +115,7 @@ fn shell_execute(verb: PCWSTR, id: &str, arguments: Option<&str>) -> Result<(), 
 
 /// Opens `files` with the executable `app`.
 pub fn open_with(app: &str, files: &[String]) -> Result<(), LaunchError> {
-    let arguments: Vec<String> = files.iter().map(|file| format!("\"{file}\"")).collect();
+    let arguments: Vec<String> = files.iter().map(|file| quote_arg(file)).collect();
     shell_execute(w!("open"), app, Some(&arguments.join(" ")))
 }
 
@@ -421,7 +446,7 @@ pub fn reveal(path: &str) -> Result<(), LaunchError> {
     shell_execute(
         w!("open"),
         "explorer.exe",
-        Some(&format!("/select,\"{path}\"")),
+        Some(&format!("/select,{}", quote_arg(path))),
     )
 }
 
@@ -768,5 +793,14 @@ mod tests {
             0
         );
         Ok(())
+    }
+
+    #[test]
+    fn quote_arg_handles_drive_roots_spaces_and_quotes() {
+        assert_eq!(quote_arg(r"C:\"), r#""C:\\""#);
+        assert_eq!(quote_arg(r"C:\My Folder\"), r#""C:\My Folder\\""#);
+        assert_eq!(quote_arg(r#"a"b"#), r#""a\"b""#);
+        assert_eq!(quote_arg(r#"a\"b"#), r#""a\\\"b""#);
+        assert_eq!(quote_arg(r"foo\\"), r#""foo\\\\""#);
     }
 }

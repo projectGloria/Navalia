@@ -61,7 +61,7 @@ fn set_locked(exe: Option<&str>, sid: &str) -> windows::core::Result<()> {
         Some(exe) => {
             if let Err(error) = register_task(exe, sid) {
                 crate::log::line(&format!(
-                    "inicio automático: tarea no disponible, se usa Run: {error}"
+                    "autostart: scheduled task unavailable, using Run: {error}"
                 ));
                 set_run_value(exe)?;
                 set_marker(true)?;
@@ -99,9 +99,18 @@ pub fn is_enabled() -> bool {
 /// A copy run from elsewhere never takes over the installed one's autostart.
 pub fn migrate() {
     if let Err(error) = migrate_inner() {
-        crate::log::line(&format!(
-            "migración del inicio automático pendiente: {error}"
-        ));
+        crate::log::line(&format!("autostart migration pending: {error}"));
+    }
+}
+
+/// Enables autostart once on first run when no `Autostart` preference or `Run`
+/// entry has been recorded yet, so an explicit off choice in Settings sticks.
+pub fn ensure_first_run_enabled(exe: &str) {
+    if has_marker() || run_value().is_some() {
+        return;
+    }
+    if let Err(error) = set(Some(exe)) {
+        crate::log::line(&format!("first-run autostart setup failed: {error}"));
     }
 }
 
@@ -150,8 +159,11 @@ fn migrate_inner() -> windows::core::Result<()> {
 /// Query the actual startup registration for Settings, instead of presenting
 /// the fast shutdown marker as proof that a task still exists and is enabled.
 pub fn enabled_for(exe: &str) -> windows::core::Result<bool> {
-    if let Some(command) = run_value() {
-        return Ok(run_approved() && command.trim().trim_matches('"').eq_ignore_ascii_case(exe));
+    // A Run entry for this exe answers at once; one for another copy (an
+    // old install folder) does not hide a task registered for this one.
+    if run_value().is_some_and(|command| command.trim().trim_matches('"').eq_ignore_ascii_case(exe))
+    {
+        return Ok(run_approved());
     }
     let sid = user_sid()?;
     with_tasks(|folder| {
@@ -227,7 +239,7 @@ fn upgrade_task(
                 TASK_LOGON_INTERACTIVE_TOKEN,
                 &none,
             )?;
-            crate::log::line("inicio automático: recuperación tras error actualizada");
+            crate::log::line("autostart: failure recovery policy updated");
         }
         Ok(true)
     }
@@ -360,6 +372,9 @@ fn task_name(sid: &str) -> BSTR {
     BSTR::from(format!("Navalia ({sid})"))
 }
 
+/// Older versions named the task after `%USERNAME%`. Only ever used to find
+/// and remove that task, and only after its account is checked by SID, so a
+/// missing or spoofed variable can at worst miss it, never touch another's.
 fn legacy_task_name() -> BSTR {
     BSTR::from(format!(
         "Navalia ({})",
@@ -503,6 +518,24 @@ fn escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
+fn has_marker() -> bool {
+    let mut value = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    // SAFETY: `value` and `size` describe a valid 4-byte buffer.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            NAVALIA_KEY,
+            MARKER_VALUE,
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&raw mut value).cast()),
+            Some(&mut size),
+        )
+    };
+    status.is_ok()
+}
+
 fn marker() -> bool {
     let mut value = 0u32;
     let mut size = size_of::<u32>() as u32;
@@ -546,10 +579,27 @@ fn set_marker(on: bool) -> windows::core::Result<()> {
 
 /// The command under `Run`, if Navalia has one there.
 fn run_value() -> Option<String> {
-    let mut buffer = [0u16; 1024];
-    let mut size = size_of_val(&buffer) as u32;
+    // Sized by the value itself: a long install path must not read as missing.
+    let mut size = 0u32;
+    // SAFETY: A size-only query.
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            RUN_KEY,
+            RUN_VALUE,
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            Some(&mut size),
+        )
+    }
+    .ok()
+    .ok()?;
+    // Room for a value that grew between the two reads.
+    let mut buffer = vec![0u16; size as usize / 2 + 64];
+    let mut size = (buffer.len() * 2) as u32;
     // SAFETY: `buffer` and `size` describe a valid buffer of that many bytes.
-    let status = unsafe {
+    unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             RUN_KEY,
@@ -559,11 +609,11 @@ fn run_value() -> Option<String> {
             Some(buffer.as_mut_ptr().cast()),
             Some(&mut size),
         )
-    };
-    status.is_ok().then(|| {
-        let len = (size as usize / 2).saturating_sub(1);
-        String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
-    })
+    }
+    .ok()
+    .ok()?;
+    let len = (size as usize / 2).saturating_sub(1).min(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..len]))
 }
 
 fn set_run_value(exe: &str) -> windows::core::Result<()> {

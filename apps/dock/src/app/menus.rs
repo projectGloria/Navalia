@@ -32,7 +32,7 @@ pub(super) fn run_outside(outside: Outside) {
     let submit = |action| {
         let result = shell_work::dispatch(action);
         if let Err(error) = result {
-            eprintln!("navalia: operación no iniciada: {error:#}");
+            navalia_shell::log::line(&format!("operation not started: {error:#}"));
             shell_work::notify_not_started();
         }
     };
@@ -68,7 +68,7 @@ pub(super) fn run_outside(outside: Outside) {
                 Some(path) if path.exists() => submit(ShellAction::Open {
                     id: path.to_string_lossy().into_owned(),
                 }),
-                _ => eprintln!("navalia: no se encontró navalia-settings.exe junto al dock"),
+                _ => navalia_shell::log::line("navalia-settings.exe not found next to the dock"),
             }
         }
         Outside::InputMenu { gfx, anchor, dark } => {
@@ -134,7 +134,7 @@ pub(super) fn run_outside(outside: Outside) {
         }
         Outside::Menu(request) => {
             let owner = HWND(MAIN_WINDOW.load(Ordering::Relaxed) as *mut _);
-            with_app("abrir menú", |app| {
+            with_app("open menu", |app| {
                 app.menu_open = true;
                 app.render()
             });
@@ -146,9 +146,9 @@ pub(super) fn run_outside(outside: Outside) {
                 request.dark,
                 request.placement,
             );
-            with_app("menú cerrado", App::after_menu);
+            with_app("menu closed", App::after_menu);
             if let Some(command) = chosen {
-                with_app_then("orden del menú", |app| {
+                with_app_then("menu command", |app| {
                     app.on_command(request.target, command)
                 });
             }
@@ -159,12 +159,12 @@ pub(super) fn run_outside(outside: Outside) {
             placement,
             dark,
         } => {
-            with_app("abrir carpeta de accesos directos", |app| {
+            with_app("open shortcuts folder", |app| {
                 app.menu_open = true;
                 app.render()
             });
             let chosen = folder_menu::show(main_window(), &folder, anchor, dark, placement);
-            with_app("menú cerrado", App::after_menu);
+            with_app("menu closed", App::after_menu);
             if let Some(path) = chosen {
                 submit(ShellAction::Open { id: path });
             }
@@ -534,7 +534,7 @@ impl App {
             }
             CMD_REMOVE_FOLDER => {
                 if let Err(error) = forget_shortcuts_folder(&self.config) {
-                    eprintln!("navalia: {error}");
+                    navalia_shell::log::line(&format!("{error}"));
                 }
                 self.config.shortcuts_folder = None;
                 self.refresh()?;

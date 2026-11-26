@@ -629,7 +629,7 @@ fn read_link(link: &Path) -> Option<(Option<String>, String)> {
             let len = buffer.iter().position(|&unit| unit == 0).unwrap_or(0);
             String::from_utf16_lossy(&buffer[..len])
         };
-        let mut path = [0u16; 1024];
+        let mut path = vec![0u16; 32_768];
         let target = shell_link
             .GetPath(&mut path, std::ptr::null_mut(), 0)
             .ok()

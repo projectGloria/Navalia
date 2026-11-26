@@ -15,7 +15,6 @@ navalia-config.workspace = true
 navalia-shell.workspace = true
 serde.workspace = true
 tauri = { version = "2", features = [] }
-tauri-plugin-updater = "2"
 # A second launch (dock menu, Start menu) focuses the open window instead of
 # opening another one that would save the same settings file.
 tauri-plugin-single-instance = "2"

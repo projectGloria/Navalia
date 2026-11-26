@@ -1,10 +1,11 @@
 /target
 node_modules/
 dist/
-# configuración local de cargo (ruta de compilación fuera de OneDrive)
+# local cargo config (build path outside OneDrive)
 /.cargo/config.toml
 *.log
+__pycache__/
+*.pyc
 ejemplos/**
 plan.md
-FIRMA-DE-CODIGO.md
 .tools/

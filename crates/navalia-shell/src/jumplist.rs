@@ -39,7 +39,7 @@ use windows::{
                 SEE_MASK_FLAG_LOG_USAGE, SEE_MASK_IDLIST, SEE_MASK_NOASYNC, SHCreateItemFromIDList,
                 SHCreateItemFromParsingName, SHCreateItemInKnownFolder, SHCreateMemStream,
                 SHELLEXECUTEINFOW, SHGetIDListFromObject, SHGetNameFromIDList,
-                SHGetPathFromIDListW, SHLoadIndirectString, SIGDN, SIGDN_DESKTOPABSOLUTEPARSING,
+                SHLoadIndirectString, SIGDN, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH,
                 SIGDN_NORMALDISPLAY, ShellExecuteExW, ShellLink,
             },
             WindowsAndMessaging::{
@@ -618,7 +618,7 @@ fn entry(object: &IUnknown, tasks: bool) -> Option<(String, Entry)> {
 }
 
 fn link_icon(link: &IShellLinkW) -> Option<IconImage> {
-    let mut path = [0u16; 1024];
+    let mut path = vec![0u16; 32_768];
     let mut index = 0;
     // SAFETY: The buffer and index outlive the call.
     unsafe { link.GetIconLocation(&mut path, &mut index) }.ok()?;
@@ -755,23 +755,18 @@ fn open_item(id_list: &[u8], program: Option<&str>) -> windows::core::Result<()>
         return Err(windows::core::Error::from_hresult(E_INVALIDARG));
     }
     let pointer = id_list.as_ptr().cast::<ITEMIDLIST>();
-    let mut path = [0u16; 260];
-    // SAFETY: `id_list` is a whole ID list (checked above).
-    let file = unsafe { SHGetPathFromIDListW(pointer, &mut path) }
-        .as_bool()
-        .then(|| {
-            let len = path
-                .iter()
-                .position(|&unit| unit == 0)
-                .unwrap_or(path.len());
-            String::from_utf16_lossy(&path[..len])
-        })
-        .filter(|file| Path::new(file).is_file());
+    // SAFETY: `id_list` is a whole ID list (checked above), and `take_string` frees it.
+    let file = unsafe {
+        SHGetNameFromIDList(pointer, SIGDN_FILESYSPATH)
+            .ok()
+            .and_then(|text| take_string(text))
+    }
+    .filter(|file| Path::new(file).is_file());
     let program = program.filter(|program| tracker::is_program(program));
     let (file_name, parameters) = match (program, file) {
         (Some(program), Some(file)) => (
             Some(HSTRING::from(program)),
-            Some(HSTRING::from(format!("\"{file}\""))),
+            Some(HSTRING::from(crate::launcher::quote_arg(&file))),
         ),
         _ => (None, None),
     };

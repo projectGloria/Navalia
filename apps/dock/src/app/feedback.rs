@@ -150,7 +150,7 @@ pub(super) fn query_bin_in_background() {
         });
     if let Err(error) = spawned {
         BIN_QUERY.0.store(0, Ordering::Release);
-        eprintln!("navalia: no se pudo consultar la Papelera: {error}");
+        navalia_shell::log::line(&format!("could not query Recycle Bin: {error}"));
     }
 }
 

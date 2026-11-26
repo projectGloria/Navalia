@@ -59,14 +59,14 @@ pub fn graphics_error(error: &anyhow::Error) {
     if !device_lost(error) || STOPPING.swap(true, Ordering::Relaxed) {
         return;
     }
-    navalia_shell::log::line(&format!("dispositivo gráfico perdido: {error:#}"));
+    navalia_shell::log::line(&format!("graphics device lost: {error:#}"));
     if can_restart(*recovered, started.elapsed()) {
         if let Err(error) = guard::request_restart(std::process::id()) {
-            navalia_shell::log::line(&format!("no se pudo pedir recuperación: {error:#}"));
+            navalia_shell::log::line(&format!("could not request recovery: {error:#}"));
         }
     } else {
         navalia_shell::log::line(
-            "fallo gráfico repetido antes de 60 s; se detiene Navalia y se devuelve la barra de Windows",
+            "repeated graphics failure within 60 s; stopping Navalia and restoring the Windows taskbar",
         );
     }
     // SAFETY: Drawing and UI dispatch run on the dock's UI thread. Wake its

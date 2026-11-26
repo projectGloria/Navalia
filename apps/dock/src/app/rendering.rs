@@ -132,11 +132,11 @@ impl App {
             && let Err(error) = bar.refresh(&self.gfx)
         {
             crate::recovery::graphics_error(&error);
-            navalia_shell::log::line(&format!("actualización de la barra superior: {error:#}"));
+            navalia_shell::log::line(&format!("menu bar refresh: {error:#}"));
         }
         let monitor = self
             .dock_monitor()
-            .context("no se pudo consultar el monitor del dock")?;
+            .context("could not query the dock monitor")?;
         let edge = self.position();
         let key = StageKey {
             screen: monitor.screen,

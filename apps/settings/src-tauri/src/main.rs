@@ -7,15 +7,15 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod updater;
 mod wallpapers;
 
-use std::{env, io, path::PathBuf, process::Command, sync::Mutex, time::Duration};
+use std::{env, io, path::PathBuf, process::Command, sync::Mutex};
 
 use navalia_config::Config;
 use navalia_shell::{autostart, dock_link, launcher};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindowBuilder};
-use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// The dock is installed next to this app.
 fn dock_exe() -> io::Result<PathBuf> {
@@ -24,7 +24,9 @@ fn dock_exe() -> io::Result<PathBuf> {
 
 #[tauri::command]
 fn get_config() -> Config {
-    navalia_config::load(&navalia_config::default_path())
+    // Same recovery as the writer: a damaged file shows the last backup, so
+    // what the window shows is what the next change is applied to.
+    navalia_config::load_or_recover(&navalia_config::default_path())
         .ok()
         .flatten()
         .unwrap_or_default()
@@ -120,9 +122,7 @@ async fn get_autostart() -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         Ok(
             autostart::enabled_for(&dock.to_string_lossy()).unwrap_or_else(|error| {
-                navalia_shell::log::line(&format!(
-                    "no se pudo consultar el inicio automático: {error}"
-                ));
+                navalia_shell::log::line(&format!("could not query autostart: {error}"));
                 // The cached choice still lets Settings open if the scheduler
                 // service is unavailable. An explicit change reports its error.
                 autostart::is_enabled()
@@ -146,24 +146,19 @@ async fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// The update found by the last check, kept until the user installs it.
 #[derive(Default)]
-struct PendingUpdate(Mutex<Option<Update>>);
+struct PendingUpdate(Mutex<Option<updater::AvailableUpdate>>);
 
-/// Asks GitHub Releases for a newer version; returns it, if any. Only runs
-/// while Settings is open: the dock itself never touches the network.
+/// Asks GitHub Releases for a newer version; returns it, if any. Settings
+/// handles update checks and wallpaper downloads; the dock's `--usage-worker`
+/// handles optional AI provider usage queries separately.
 #[tauri::command]
-async fn check_update(
-    app: tauri::AppHandle,
-    pending: State<'_, PendingUpdate>,
-) -> Result<Option<UpdateInfo>, String> {
-    let update = app
-        .updater()
-        .map_err(|error| error.to_string())?
-        .check()
+async fn check_update(pending: State<'_, PendingUpdate>) -> Result<Option<UpdateInfo>, String> {
+    let update = tauri::async_runtime::spawn_blocking(updater::check)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())??;
     let info = update.as_ref().map(|update| UpdateInfo {
         version: update.version.clone(),
-        notes: update.body.clone().filter(|notes| is_release_page(notes)),
+        notes: update.notes.clone(),
     });
     *pending.0.lock().map_err(|error| error.to_string())? = update;
     Ok(info)
@@ -184,18 +179,10 @@ struct Progress {
     total: Option<u64>,
 }
 
-const RELEASES: &str = "https://github.com/projectGloria/Navalia/releases/";
-
-/// The update manifest is not signed (only the installer is), so the only
-/// link it may open is a release page of this repository.
-fn is_release_page(url: &str) -> bool {
-    url.starts_with(RELEASES) && !url.contains(char::is_whitespace)
-}
-
 #[tauri::command]
 fn open_release_notes(url: String) -> Result<(), String> {
-    if !is_release_page(&url) {
-        return Err("enlace no permitido".into());
+    if !updater::is_release_page(&url) {
+        return Err("disallowed release notes URL".into());
     }
     launcher::open(&url).map_err(|error| error.to_string())
 }
@@ -248,8 +235,8 @@ async fn wallpaper_preview(window: tauri::WebviewWindow) -> Option<String> {
     .flatten()
 }
 
-/// Downloads the signed installer and runs it; the installer stops the dock,
-/// replaces both apps and starts the dock again. This process exits.
+/// Downloads the verified installer and runs it silently; the installer closes
+/// running processes, replaces both apps, and relaunches the dock.
 #[tauri::command]
 async fn install_update(
     app: tauri::AppHandle,
@@ -261,47 +248,71 @@ async fn install_update(
         .lock()
         .map_err(|error| error.to_string())?
         .clone()
-        .ok_or("no hay ninguna actualización pendiente")?;
-    let mut downloaded = 0u64;
-    update
-        .download_and_install(
-            |chunk, total| {
-                downloaded += chunk as u64;
-                let _ = app.emit("update-progress", Progress { downloaded, total });
+        .ok_or("no pending update")?;
+    let progress_app = app.clone();
+    let launched = tauri::async_runtime::spawn_blocking(move || {
+        updater::download_and_install(
+            &update,
+            |downloaded, total| {
+                let _ = progress_app.emit("update-progress", Progress { downloaded, total });
             },
-            || {},
+            || false,
         )
-        .await
-        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if launched {
+        navalia_shell::log::flush();
+        app.exit(0);
+    }
+    Ok(())
 }
 
 /// The argument the dock starts this app with for a background update.
 const UPDATE_ARG: &str = "--update";
 
 /// Checks for a newer version and installs it without asking, as the user
-/// chose in Settings; the installer stops and restarts the dock. Exits when
-/// there is nothing to do or anything fails: the next try is tomorrow.
+/// chose in Settings. Exits when there is nothing to do or anything fails: the
+/// next try is tomorrow.
 async fn update_in_background(app: AppHandle) {
     let config = get_config();
     let allowed = config.check_updates && config.auto_update;
-    let found = match app.updater_builder().timeout(Duration::from_secs(60)) {
-        // The installer starts the dock again; this app need not come back.
-        builder if allowed => match builder.restart_after_install(false).build() {
-            Ok(updater) => updater.check().await.ok().flatten(),
-            Err(_) => None,
-        },
-        _ => None,
+    let found = if allowed {
+        tauri::async_runtime::spawn_blocking(updater::check)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+    } else {
+        None
     };
     // Opening Settings meanwhile lands in this process (single instance):
-    // then it stays as the user's Settings, which shows the update itself,
-    // and installing must not close it under them.
+    // abort both before and during download so an open Settings window is
+    // never killed by the installer.
     let window_opened = || app.get_webview_window("main").is_some();
-    if let Some(update) = found.filter(|_| !window_opened())
-        && let Err(error) = update.download_and_install(|_, _| {}, || {}).await
-    {
-        eprintln!("navalia-settings: actualización: {error}");
+    if let Some(update) = found.filter(|_| !window_opened()) {
+        let app_for_abort = app.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            updater::download_and_install(
+                &update,
+                |_, _| {},
+                || app_for_abort.get_webview_window("main").is_some(),
+            )
+        })
+        .await;
+        match result {
+            Ok(Ok(true)) => {
+                navalia_shell::log::flush();
+                app.exit(0);
+                return;
+            }
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => navalia_shell::log::line(&format!("settings update: {error}")),
+            Err(error) => navalia_shell::log::line(&format!("settings update task: {error}")),
+        }
     }
     if !window_opened() {
+        navalia_shell::log::flush();
         app.exit(0);
     }
 }
@@ -320,7 +331,7 @@ fn show_window(app: &AppHandle) {
     if let Err(error) =
         WebviewWindowBuilder::from_config(app, config).and_then(|window| window.build())
     {
-        eprintln!("navalia-settings: {error}");
+        navalia_shell::log::line(&format!("settings window: {error}"));
     }
 }
 
@@ -332,7 +343,7 @@ fn main() {
         && !dock_link::is_running()
         && let Err(error) = dock_exe().and_then(|dock| Command::new(dock).spawn())
     {
-        eprintln!("navalia-settings: no se pudo abrir el dock: {error}");
+        navalia_shell::log::line(&format!("could not launch dock from settings: {error}"));
     }
     let result = tauri::Builder::default()
         // First, so a second launch exits before doing anything else.
@@ -343,7 +354,6 @@ fn main() {
                 show_window(app);
             }
         }))
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PendingUpdate::default())
         .setup(move |app| {
             if background {
@@ -373,6 +383,7 @@ fn main() {
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {
-        eprintln!("navalia-settings: {error}");
+        navalia_shell::log::line(&format!("settings exited with error: {error}"));
     }
+    navalia_shell::log::flush();
 }

@@ -4,8 +4,19 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 pub(super) const MAX_BYTES: u64 = 32 * 1024 * 1024;
-pub(super) const ORIGIN: &str =
-    "https://raw.githubusercontent.com/projectGloria/Navalia/main/apps/settings/wallpapers";
+/// Where originals are fetched from, in order. The checksums below are baked
+/// into each build, so the first source is this build's own release tag,
+/// whose files never change. `main` is only a fallback for a tag that does
+/// not exist (404), such as a local build; the size and SHA-256 check still
+/// rejects any file there that differs from what this build expects.
+pub(super) const ORIGINS: [&str; 2] = [
+    concat!(
+        "https://raw.githubusercontent.com/projectGloria/Navalia/v",
+        env!("CARGO_PKG_VERSION"),
+        "/apps/settings/wallpapers"
+    ),
+    "https://raw.githubusercontent.com/projectGloria/Navalia/main/apps/settings/wallpapers",
+];
 
 #[derive(Deserialize)]
 pub(super) struct Wallpaper {

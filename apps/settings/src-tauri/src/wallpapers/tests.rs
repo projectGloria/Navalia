@@ -175,6 +175,57 @@ fn response_streams_are_bounded_even_without_a_content_length() -> Result<(), St
 }
 
 #[test]
+fn originals_come_from_this_release_tag_before_main() {
+    let tag = format!("/projectGloria/Navalia/v{}/", env!("CARGO_PKG_VERSION"));
+    assert!(catalog::ORIGINS[0].contains(&tag));
+    assert!(catalog::ORIGINS[1].contains("/projectGloria/Navalia/main/"));
+    for origin in catalog::ORIGINS {
+        assert!(origin.starts_with("https://raw.githubusercontent.com/"));
+        assert!(origin.ends_with("/apps/settings/wallpapers"));
+    }
+}
+
+#[test]
+fn only_a_missing_release_tag_falls_back_to_main() -> Result<(), String> {
+    let asset = entry(1)?;
+    let expected: Vec<String> = catalog::ORIGINS
+        .iter()
+        .map(|origin| format!("{origin}/{}", asset.name))
+        .collect();
+    // Found under the tag: main is never asked.
+    let mut asked = Vec::new();
+    cache::from_first_origin(asset, |url| {
+        asked.push(url.to_owned());
+        Ok(true)
+    })?;
+    assert_eq!(asked, expected[..1]);
+    // 404 under the tag: main is next.
+    asked.clear();
+    cache::from_first_origin(asset, |url| {
+        asked.push(url.to_owned());
+        Ok(asked.len() == 2)
+    })?;
+    assert_eq!(asked, expected);
+    // Any other failure stops without trying main.
+    asked.clear();
+    let result = cache::from_first_origin(asset, |url| {
+        asked.push(url.to_owned());
+        Err("Wallpaper download failed (500 Internal Server Error)".into())
+    });
+    assert!(result.is_err());
+    assert_eq!(asked, expected[..1]);
+    // Missing everywhere.
+    asked.clear();
+    let result = cache::from_first_origin(asset, |url| {
+        asked.push(url.to_owned());
+        Ok(false)
+    });
+    assert!(result.is_err());
+    assert_eq!(asked, expected);
+    Ok(())
+}
+
+#[test]
 #[ignore = "Downloads one catalog original into test storage; never changes the desktop"]
 fn native_github_download_verifies_and_then_reuses_the_cache_offline() -> Result<(), String> {
     let root = Directory::new();

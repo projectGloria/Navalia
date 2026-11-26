@@ -40,16 +40,5 @@
     "icon": [
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzNEYxOUVEODA3QTI1RDkKUldUWkpYcUE3UmxQSTdLMCtDWW5oT2o2NWVtL0cwUnorMWdsOStGMGlwMmNsNEczS1Nldlo1L0UK",
-      "endpoints": [
-        "https://github.com/projectGloria/Navalia/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
   }
 }

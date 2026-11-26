@@ -111,12 +111,9 @@ try {
     Assert-Rejected 'missing release file cannot pass' { Assert-ReleaseAntivirus -Path (Join-Path $root 'missing.exe') -ReportDirectory $reportDir }
     $workflow = Get-Content (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw
     $scan = $workflow.IndexOf('- name: Analyze the final release files with Microsoft Defender')
-    $prepare = $workflow.IndexOf('- name: Prepare release files')
-    $publish = $workflow.IndexOf('- name: Create draft release')
-    if ($scan -lt 0 -or $scan -ge $prepare -or $prepare -ge $publish) { throw 'Scan must precede updater manifest and release creation.' }
-    if ($workflow -notmatch '-DownloadPath "target/release/bundle/nsis/' -or
-        $workflow -notmatch '-DownloadSource "https://github.com/') { throw 'Release must check the downloaded installer context.' }
-    Write-Host 'PASS: rejected files cannot reach updater metadata or a draft release'
+    $upload = $workflow.IndexOf('uses: actions/upload-artifact@')
+    if ($scan -lt 0 -or $upload -lt 0 -or $scan -ge $upload) { throw 'Defender scan must precede uploading the staged app artifact.' }
+    Write-Host 'PASS: rejected files cannot reach the staged release artifact'
 } finally {
     # Only this test's newly created absolute temp directory may be removed.
     $resolved = [IO.Path]::GetFullPath($root)

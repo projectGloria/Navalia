@@ -6,21 +6,18 @@
 use std::{env, os::windows::process::CommandExt, process::Command, time::Duration};
 
 use anyhow::{Context, Result};
-use navalia_shell::{
-    dock_link::DOCK_WINDOW_CLASS, power, system::set_window_transitions, taskbar,
-    tracker::WindowTracker,
-};
+use navalia_shell::{dock_link::DOCK_WINDOW_CLASS, power, system::set_window_transitions, taskbar};
 use windows::{
     Win32::{
-        Foundation::{HANDLE, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM},
+        Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT, WPARAM},
         System::Threading::{
             CreateEventW, EVENT_MODIFY_STATE, NORMAL_PRIORITY_CLASS, OpenEventW, OpenProcess,
             PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
             TerminateProcess, WaitForMultipleObjects, WaitForSingleObject,
         },
         UI::WindowsAndMessaging::{
-            FindWindowW, GetSystemMetrics, GetWindowThreadProcessId, PostMessageW, SM_SHUTTINGDOWN,
-            SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_CLOSE,
+            FindWindowExW, GetSystemMetrics, GetWindowThreadProcessId, IsWindow, PostMessageW,
+            SM_SHUTTINGDOWN, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_CLOSE,
         },
     },
     core::{HSTRING, Owned},
@@ -50,6 +47,25 @@ pub struct Channels {
     _ready: Owned<HANDLE>,
 }
 
+fn find_dock_window(pid: Option<u32>) -> Option<HWND> {
+    let mut previous = None;
+    // SAFETY: Enumerates top-level windows matching our class name without sending messages.
+    while let Ok(window) = unsafe { FindWindowExW(None, previous, DOCK_WINDOW_CLASS, None) } {
+        if let Some(expected) = pid {
+            let mut owner = 0u32;
+            // SAFETY: Read-only query on a live HWND.
+            unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
+            if owner == expected {
+                return Some(window);
+            }
+        } else {
+            return Some(window);
+        }
+        previous = Some(window);
+    }
+    None
+}
+
 /// Signal the existing guard, even if the UI thread can no longer pump messages.
 /// A per-process channel keeps an old guard from restarting a newer instance.
 pub fn request_restart(pid: u32) -> Result<()> {
@@ -64,7 +80,7 @@ pub fn request_restart(pid: u32) -> Result<()> {
         // covers device creation failing before the child guard has started.
         anyhow::ensure!(
             WaitForSingleObject(*ready, 2_000) == WAIT_OBJECT_0,
-            "el guardián de Navalia no confirmó que esté preparado"
+            "the Navalia watchdog did not confirm readiness"
         );
         let event = Owned::new(OpenEventW(EVENT_MODIFY_STATE, false, &recovery_event(pid))?);
         SetEvent(*event)?;
@@ -73,24 +89,26 @@ pub fn request_restart(pid: u32) -> Result<()> {
 }
 
 pub fn recover_existing() -> Result<()> {
-    // A second launch may arrive before the first has created its HWND. Wait
-    // briefly in this disposable process, never in the running dock's UI.
-    for _ in 0..10 {
-        // SAFETY: Read-only lookup; no messages or pointers cross process boundaries.
-        if let Ok(window) = unsafe { FindWindowW(DOCK_WINDOW_CLASS, None) } {
+    // A second launch may arrive before the first has created its HWND or
+    // guard channel. Wait in this disposable process, never in the dock's UI.
+    for _ in 0..50 {
+        if let Some(window) = find_dock_window(None) {
             let mut pid = 0;
+            // SAFETY: Read-only lookup on a live HWND.
             unsafe {
                 GetWindowThreadProcessId(window, Some(&mut pid));
             }
-            request_restart(pid).context("no se pudo recuperar la instancia de Navalia")?;
-            navalia_shell::log::line(
-                "segunda apertura: se solicita recuperar la instancia existente",
-            );
-            return Ok(());
+            if pid != 0 && request_restart(pid).is_ok() {
+                navalia_shell::log::line(
+                    "second launch: requested recovery of the existing instance",
+                );
+                return Ok(());
+            }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    anyhow::bail!("Navalia aún está iniciándose o cerrándose; vuelve a abrirlo en unos segundos")
+    navalia_shell::log::line("Navalia is still starting or closing; ignoring duplicate launch");
+    Ok(())
 }
 
 #[derive(Default)]
@@ -134,12 +152,12 @@ pub fn spawn() -> Result<Channels> {
             &ready_event(std::process::id()),
         )?)
     };
-    let exe = env::current_exe().context("no se pudo localizar navalia.exe")?;
+    let exe = env::current_exe().context("could not locate navalia.exe")?;
     Command::new(exe)
         .args([FLAG, &std::process::id().to_string()])
         .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .spawn()
-        .context("no se pudo lanzar el proceso guardián")?;
+        .context("could not launch the watchdog process")?;
     Ok(Channels {
         _restart: event,
         _ready: ready,
@@ -156,7 +174,7 @@ pub fn run(pid: u32) -> Result<()> {
     {
         Ok(process) => unsafe { Owned::new(process) },
         Err(error) => {
-            eprintln!("navalia: el guardián no pudo abrir el dock: {error}");
+            navalia_shell::log::line(&format!("watchdog could not open dock process: {error}"));
             restore_desktop();
             return Ok(());
         }
@@ -178,13 +196,13 @@ pub fn run(pid: u32) -> Result<()> {
         Ok(event) => event,
         Err(error) => {
             restore_desktop();
-            return Err(error.context("no se pudo abrir el canal de recuperación"));
+            return Err(error.context("could not open the recovery channel"));
         }
     };
     let restart = match watch(pid, *process, *recovery) {
         Ok(restart) => restart,
         Err(error) => {
-            navalia_shell::log::line(&format!("no se pudo supervisar Navalia: {error:#}"));
+            navalia_shell::log::line(&format!("could not monitor Navalia: {error:#}"));
             false
         }
     };
@@ -194,15 +212,15 @@ pub fn run(pid: u32) -> Result<()> {
     // Never race the previous instance's mutex or the old guard's restoration.
     // A logoff/shutdown must not start a replacement during session teardown.
     if restart && unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) } == 0 {
-        let exe = env::current_exe().context("no se pudo localizar navalia.exe")?;
+        let exe = env::current_exe().context("could not locate navalia.exe")?;
         Command::new(exe)
             .arg(crate::recovery::RECOVERED_FLAG)
             // The guard runs at IDLE priority; the replacement UI must not
             // inherit it or its animations/startup would be starved under load.
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | NORMAL_PRIORITY_CLASS.0)
             .spawn()
-            .context("no se pudo reiniciar Navalia tras recuperar el escritorio")?;
-        navalia_shell::log::line("escritorio recuperado; se inicia una interfaz gráfica nueva");
+            .context("could not restart Navalia after recovering the desktop")?;
+        navalia_shell::log::line("desktop recovered; starting a new UI instance");
     }
     navalia_shell::log::flush();
     Ok(())
@@ -220,16 +238,14 @@ fn watch(pid: u32, process: HANDLE, recovery: HANDLE) -> Result<bool> {
             return Ok(unsafe { WaitForSingleObject(recovery, 0) } == WAIT_OBJECT_0);
         }
         if wait.0 == WAIT_OBJECT_0.0 + 1 {
-            navalia_shell::log::line("recuperación solicitada; se cierra la instancia anterior");
+            navalia_shell::log::line("recovery requested; closing the previous instance");
             return stop_dock(pid, process, CLOSE_TIMEOUT_MS);
         }
         if wait != WAIT_TIMEOUT {
-            anyhow::bail!("el guardián no pudo esperar al dock: {wait:?}");
+            anyhow::bail!("watchdog could not wait on the dock: {wait:?}");
         }
         if health.observe(ui_responds(pid)) {
-            navalia_shell::log::line(
-                "la interfaz dejó de responder; se restaura la barra de Windows",
-            );
+            navalia_shell::log::line("UI stopped responding; restoring the Windows taskbar");
             // Keep monitoring this process. An unrelated hung app must not
             // hold the guard in window enumeration while it repairs the shell.
             taskbar::give_back_on_exit();
@@ -243,18 +259,14 @@ fn watch(pid: u32, process: HANDLE, recovery: HANDLE) -> Result<bool> {
 /// close first; a wedged renderer, destructor or Explorer worker has a deadline.
 fn stop_dock(pid: u32, process: HANDLE, timeout: u32) -> Result<bool> {
     unsafe {
-        if let Ok(window) = FindWindowW(DOCK_WINDOW_CLASS, None) {
-            let mut owner = 0;
-            GetWindowThreadProcessId(window, Some(&mut owner));
-            if owner == pid {
-                let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
-            }
+        if let Some(window) = find_dock_window(Some(pid)) {
+            let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
         match WaitForSingleObject(process, timeout) {
             WAIT_OBJECT_0 => Ok(true),
             WAIT_TIMEOUT => {
                 navalia_shell::log::line(
-                    "cierre de recuperación agotó su plazo; se finaliza solo la instancia anterior de Navalia",
+                    "recovery shutdown timed out; terminating only the previous Navalia instance",
                 );
                 if let Err(error) = TerminateProcess(process, 1)
                     && WaitForSingleObject(process, 0) != WAIT_OBJECT_0
@@ -263,7 +275,7 @@ fn stop_dock(pid: u32, process: HANDLE, timeout: u32) -> Result<bool> {
                 }
                 Ok(WaitForSingleObject(process, CLOSE_TIMEOUT_MS) == WAIT_OBJECT_0)
             }
-            other => anyhow::bail!("no se pudo esperar el cierre del dock: {other:?}"),
+            other => anyhow::bail!("could not wait for the dock to exit: {other:?}"),
         }
     }
 }
@@ -271,15 +283,10 @@ fn stop_dock(pid: u32, process: HANDLE, timeout: u32) -> Result<bool> {
 fn ui_responds(pid: u32) -> bool {
     // SAFETY: The scalar-only health message runs on the dock's UI thread.
     // The timeout bounds an unresponsive peer; no COM call crosses threads.
+    let Some(window) = find_dock_window(Some(pid)) else {
+        return false;
+    };
     unsafe {
-        let Ok(window) = FindWindowW(DOCK_WINDOW_CLASS, None) else {
-            return false;
-        };
-        let mut owner = 0u32;
-        GetWindowThreadProcessId(window, Some(&mut owner));
-        if owner != pid {
-            return false;
-        }
         SendMessageTimeoutW(
             window,
             crate::app::HEALTH_CHECK,
@@ -299,10 +306,17 @@ fn restore_desktop() {
     // And the taskbar's overlay calls, if the dock still held them.
     navalia_shell::taskband::restore_after_exit();
     // The dock turns off window transitions while it runs (genie effect); if
-    // it died without restoring them, do it here.
-    // The opt-in workspace mode can also have calmed windows on other desktops.
-    for window in WindowTracker::default().list_with_workspaces(true) {
-        set_window_transitions(window.hwnd, true);
+    // it died without restoring them, restore only the windows it calmed.
+    let file = navalia_shell::paths::local_file("calmed-windows");
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        for line in text.lines() {
+            if let Ok(hwnd) = line.trim().parse::<isize>()
+                && unsafe { IsWindow(Some(HWND(hwnd as *mut _))).as_bool() }
+            {
+                set_window_transitions(hwnd, true);
+            }
+        }
+        let _ = std::fs::remove_file(file);
     }
 }
 

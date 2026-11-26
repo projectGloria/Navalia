@@ -143,7 +143,8 @@ export function App() {
         if (!alive) return;
         setConfig(loaded);
         setAutostartState(starts);
-        // The only network access in Navalia, and the user can turn it off.
+        // The update check; the user can turn it off. (The dock's AI usage
+        // and the wallpaper downloads are the other network uses.)
         if (!loaded.checkUpdates) {
           setUpdateState({ kind: "off" });
           return;
@@ -161,6 +162,10 @@ export function App() {
       setUpdateState((state) => (state.kind === "installing" ? { ...state, progress: share } : state));
     });
     let closing = false;
+    // The first close after a failed save stays open to show the error; a
+    // second one closes anyway, so a write that keeps failing (a read-only
+    // folder, a full disk) can never trap the window.
+    let warned = false;
     const close = getCurrentWindow().onCloseRequested(async (event) => {
       if (!alive || closing) {
         event.preventDefault();
@@ -172,8 +177,10 @@ export function App() {
       do {
         drained = flushSettings();
         if (!await drained) {
-          event.preventDefault();
           closing = false;
+          if (warned) return;
+          warned = true;
+          event.preventDefault();
           return;
         }
       } while (pending.current || writes.current !== drained);

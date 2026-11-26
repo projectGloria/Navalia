@@ -170,7 +170,7 @@ fn show_at(
     match Popup::open(gfx, owner, items, anchor, dark, placement) {
         Ok(popup) => popup.run(),
         Err(error) => {
-            eprintln!("navalia: menú: {error:#}");
+            navalia_shell::log::line(&format!("menu: {error:#}"));
             show_native(owner, items, anchor, dark, placement)
         }
     }

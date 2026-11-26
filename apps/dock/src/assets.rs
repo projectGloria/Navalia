@@ -50,7 +50,7 @@ impl Visuals {
         Self::start(window, message, |id, variant| {
             IconCache::default()
                 .get_variant(id, variant, ICON_SIZE)
-                .inspect_err(|error| eprintln!("navalia: {error}"))
+                .inspect_err(|error| navalia_shell::log::line(&format!("{error}")))
                 .ok()
         })
     }

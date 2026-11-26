@@ -431,6 +431,18 @@ test("failed writes remain retryable and prevent closing until saved", async () 
   } finally { unmount(); }
 });
 
+test("a second close gets out when writes keep failing", async () => {
+  const view = fixture("menubar", {}, async () => { throw new Error("read-only"); });
+  const unmount = await view.mount();
+  try {
+    view.change(texts.en.menuBarMusic, false);
+    view.fire(60);
+    await settle();
+    assert.equal(await view.close(), true, "the first close shows the error");
+    assert.equal(await view.close(), false, "the second close is not trapped");
+  } finally { unmount(); }
+});
+
 test("a queued newer choice wins over an earlier failed write", async () => {
   let rejectFirst;
   const view = fixture("menubar", {}, () => view.calls.length === 1

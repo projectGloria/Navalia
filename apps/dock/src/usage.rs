@@ -3,9 +3,9 @@
 use std::{
     env, fs,
     io::{Read, Seek, SeekFrom},
-    os::windows::process::CommandExt,
+    os::windows::{io::AsRawHandle, process::CommandExt},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -20,15 +20,24 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use windows::Win32::{
-    Foundation::{CloseHandle, HWND, LPARAM, WPARAM},
-    System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-        TH32CS_SNAPPROCESS,
+    Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM},
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+        Threading::WaitForSingleObject,
     },
     UI::WindowsAndMessaging::PostMessageW,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// How long one refresh may take in the worker. Each request has its own
+/// timeout, but a slow machine probing every provider adds them up; past
+/// this the worker is ended and the next refresh tries again.
+const WORKER_DEADLINE_MS: u32 = 60_000;
+/// More than any real snapshot; a larger answer is not read.
+const WORKER_OUTPUT_LIMIT: u64 = 1 << 20;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum State {
@@ -475,20 +484,54 @@ pub fn worker_main() -> anyhow::Result<()> {
 }
 
 fn fetch_in_child() -> Snapshot {
-    let Ok(executable) = env::current_exe() else {
-        return unavailable_snapshot();
-    };
-    let Ok(output) = Command::new(executable)
+    run_worker().unwrap_or_else(unavailable_snapshot)
+}
+
+/// Runs the worker in a job (it ends with the dock) and under a deadline,
+/// so a stuck request can never keep later refreshes from starting.
+fn run_worker() -> Option<Snapshot> {
+    let job = crate::accessories::WorkerJob::new().ok()?;
+    let mut child = Command::new(env::current_exe().ok()?)
         .arg("--usage-worker")
         .creation_flags(0x0800_0000)
-        .output()
-    else {
-        return unavailable_snapshot();
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stop = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
     };
-    if !output.status.success() {
-        return unavailable_snapshot();
+    if job.assign(&child).is_err() {
+        stop(&mut child);
+        return None;
     }
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| unavailable_snapshot())
+    let Some(stdout) = child.stdout.take() else {
+        stop(&mut child);
+        return None;
+    };
+    // Read while waiting: a snapshot larger than the pipe's buffer would
+    // otherwise block the worker until the deadline.
+    let reader = thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = stdout.take(WORKER_OUTPUT_LIMIT).read_to_end(&mut output);
+        output
+    });
+    // SAFETY: The child's handle stays valid until `child` is dropped.
+    let finished =
+        unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), WORKER_DEADLINE_MS) }
+            == WAIT_OBJECT_0;
+    if !finished {
+        navalia_shell::log::line("AI usage worker exceeded its deadline");
+        let _ = child.kill();
+    }
+    let status = child.wait().ok()?;
+    let output = reader.join().ok()?;
+    if !finished || !status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output).ok()
 }
 
 impl Drop for Monitor {

@@ -16,13 +16,8 @@ use windows::{
             },
             Gdi::ClientToScreen,
         },
-        Storage::{
-            EnhancedStorage::PKEY_AppUserModel_ID, Packaging::Appx::GetApplicationUserModelId,
-        },
-        System::Threading::{
-            GetCurrentProcessId, OpenProcess, PROCESS_NAME_WIN32,
-            PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-        },
+        Storage::EnhancedStorage::PKEY_AppUserModel_ID,
+        System::Threading::{GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
         UI::{
             Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow},
             WindowsAndMessaging::{
@@ -37,7 +32,7 @@ use windows::{
             },
         },
     },
-    core::{BOOL, PWSTR},
+    core::BOOL,
 };
 
 pub(crate) const APPS_FOLDER: &str = "shell:AppsFolder\\";
@@ -310,21 +305,12 @@ pub fn running_processes(ids: &[String]) -> Vec<String> {
 
 /// The executable a process runs, if it can be queried.
 fn process_image(pid: u32) -> Option<String> {
-    // SAFETY: The handle is closed before returning; the buffer has the
-    // declared length.
+    // SAFETY: The handle is closed before returning.
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buffer = [0u16; 1024];
-        let mut len = buffer.len() as u32;
-        let read = QueryFullProcessImageNameW(
-            process,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &mut len,
-        )
-        .is_ok();
+        let image = crate::paths::query_process_image(process);
         let _ = CloseHandle(process);
-        read.then(|| String::from_utf16_lossy(&buffer[..len as usize]))
+        image
     }
 }
 
@@ -851,30 +837,14 @@ fn hosted_uwp_app_id(frame: HWND) -> Option<String> {
 }
 
 fn process_app_id(pid: u32, hwnd: Option<HWND>) -> Option<String> {
-    // SAFETY: The process handle is closed before leaving the block, and the
-    // buffers have the declared lengths.
+    // SAFETY: The process handle is closed before leaving the block.
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
 
-        let mut buffer = [0u16; 1024];
-        let mut len = buffer.len() as u32;
-        let id = if GetApplicationUserModelId(process, &mut len, Some(PWSTR(buffer.as_mut_ptr())))
-            .is_ok()
-        {
-            // `len` includes the null terminator.
-            let aumid = String::from_utf16_lossy(&buffer[..len.saturating_sub(1) as usize]);
+        let id = if let Some(aumid) = crate::paths::query_process_aumid(process) {
             Some(format!("{APPS_FOLDER}{aumid}"))
         } else {
-            len = buffer.len() as u32;
-            QueryFullProcessImageNameW(
-                process,
-                PROCESS_NAME_WIN32,
-                PWSTR(buffer.as_mut_ptr()),
-                &mut len,
-            )
-            .ok()
-            .map(|()| {
-                let image = String::from_utf16_lossy(&buffer[..len as usize]);
+            crate::paths::query_process_image(process).map(|image| {
                 // A program whose windows belong to a host that is no .exe
                 // (LibreOffice's soffice.bin) has no icon or name of its own
                 // there; its windows say which app they are (Calc, Writer),

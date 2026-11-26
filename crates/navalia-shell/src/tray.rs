@@ -26,11 +26,16 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{
-            ERROR_CLASS_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, RECT, WPARAM,
+            CloseHandle, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT,
+            RECT, WPARAM,
         },
         System::{
-            DataExchange::COPYDATASTRUCT, LibraryLoader::GetModuleHandleW,
-            Threading::GetCurrentProcessId,
+            DataExchange::COPYDATASTRUCT,
+            LibraryLoader::GetModuleHandleW,
+            Threading::{
+                GetCurrentProcessId, OpenProcess, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            },
         },
         UI::WindowsAndMessaging::{
             AllowSetForegroundWindow, ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW,
@@ -39,13 +44,13 @@ use windows::{
             KillTimer, MSG, MSGFLT_ALLOW, PostMessageW, PostQuitMessage, RegisterClassW,
             RegisterWindowMessageW, RemovePropW, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SendNotifyMessageW,
-            SetPropW, SetTimer, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE,
-            WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER, WM_USER, WNDCLASSW,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            SetPropW, SetTimer, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE,
+            WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDBLCLK,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER, WM_USER,
+            WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
-    core::{BOOL, PCWSTR, w},
+    core::{BOOL, PCWSTR, PWSTR, w},
 };
 
 use crate::icons::{IconImage, icon_image};
@@ -94,7 +99,7 @@ const HOST_TIMER: usize = 1;
 /// and drops icons whose app died without removing them.
 const HOST_TICK_MS: u32 = 250;
 /// How long Explorer may take to answer a forwarded message.
-const FORWARD_TIMEOUT_MS: u32 = 3_000;
+const FORWARD_TIMEOUT_MS: u32 = 1_000;
 
 /// Who an icon is: apps name it by a GUID, or by their window and a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -108,6 +113,9 @@ pub struct TrayIcon {
     pub key: IconKey,
     /// The window that gets the icon's clicks.
     pub owner: isize,
+    /// The process that owned `owner` when it was recorded: a handle Windows
+    /// reuses for another process's window no longer counts as alive.
+    pub owner_pid: u32,
     pub uid: u32,
     /// The message the owner wants clicks as; 0 when it gave none.
     pub callback: u32,
@@ -241,9 +249,13 @@ fn apply(
             false
         }
         (NIM_ADD | NIM_MODIFY, Some(index)) => update(&mut icons[index], notify, image, serial),
-        // Explorer refuses an add it already has: the icons asked for again
-        // after `TaskbarCreated` are kept all the same.
-        (NIM_ADD, None) => {
+        // Explorer refuses an add it already has: icons re-sent after
+        // `TaskbarCreated` are kept if they carry a window and visible/callback
+        // data, while truly rejected empty adds are dropped.
+        (NIM_ADD, None)
+            if accepted
+                || (notify.hwnd != 0 && notify.flags & (NIF_ICON | NIF_MESSAGE | NIF_TIP) != 0) =>
+        {
             icons.push(new_icon(notify, image, serial));
             true
         }
@@ -253,6 +265,15 @@ fn apply(
             icons.push(new_icon(notify, image, serial));
             true
         }
+        // The version of an icon added before the host existed: kept, not
+        // shown (no picture or click message yet), so the clicks that later
+        // reach it use the format its owner asked for.
+        (NIM_SETVERSION, None) if accepted => {
+            let mut icon = new_icon(notify, None, serial);
+            icon.version = notify.version;
+            icons.push(icon);
+            false
+        }
         _ => false,
     }
 }
@@ -261,6 +282,7 @@ fn new_icon(notify: &Notify, image: Option<Arc<IconImage>>, serial: &AtomicU64) 
     let mut icon = TrayIcon {
         key: notify.key(),
         owner: notify.hwnd,
+        owner_pid: window_pid(notify.hwnd),
         uid: notify.uid,
         callback: 0,
         version: 0,
@@ -281,6 +303,9 @@ fn update(
 ) -> bool {
     let before = icon.clone();
     if notify.hwnd != 0 {
+        if icon.owner != notify.hwnd {
+            icon.owner_pid = window_pid(notify.hwnd);
+        }
         icon.owner = notify.hwnd;
         icon.uid = notify.uid;
     }
@@ -580,8 +605,13 @@ fn drop_orphans(shared: &Shared) {
         return;
     };
     let before = icons.len();
-    // SAFETY: Read-only checks on window handles.
-    icons.retain(|icon| unsafe { IsWindow(Some(HWND(icon.owner as *mut _))) }.as_bool());
+    // A handle that now belongs to another process was reused: the icon's
+    // owner is gone.
+    icons.retain(|icon| {
+        // SAFETY: Read-only check on a window handle.
+        unsafe { IsWindow(Some(HWND(icon.owner as *mut _))) }.as_bool()
+            && (icon.owner_pid == 0 || window_pid(icon.owner) == icon.owner_pid)
+    });
     let changed = icons.len() != before;
     drop(icons);
     if changed {
@@ -589,9 +619,55 @@ fn drop_orphans(shared: &Shared) {
     }
 }
 
+/// The process that owns `window`; 0 if it is gone or not a window.
+fn window_pid(window: isize) -> u32 {
+    if window == 0 {
+        return 0;
+    }
+    let mut pid = 0u32;
+    // SAFETY: Read-only lookup; an invalid handle leaves `pid` at 0.
+    unsafe { GetWindowThreadProcessId(HWND(window as *mut _), Some(&mut pid)) };
+    pid
+}
+
+/// Whether `pid` runs a `navalia*` executable from the folder Navalia is
+/// installed in (the dock, its watchdog and workers, Settings).
+fn is_navalia_process(pid: u32, folder: Option<&std::path::Path>) -> bool {
+    let Some(folder) = folder else {
+        return false;
+    };
+    // SAFETY: Opens the process only to read its image name, then closes it.
+    let image = unsafe {
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut buffer = vec![0u16; 32_768];
+        let mut len = buffer.len() as u32;
+        let read = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(process);
+        if read.is_err() {
+            return false;
+        }
+        std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len as usize]))
+    };
+    image
+        .parent()
+        .is_some_and(|parent| parent.as_os_str().eq_ignore_ascii_case(folder.as_os_str()))
+        && image
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with("navalia"))
+}
+
 /// Posts `TaskbarCreated` to the other apps' windows, as Explorer does after
-/// it restarts: each adds its icons again, now through the host. The dock's
-/// own windows are left out, as for them it means taking the taskbar again.
+/// it restarts: each adds its icons again, now through the host. Navalia's
+/// own processes are left out: for the dock it means taking the taskbar
+/// again, and the others have no icons to add.
 fn ask_for_icons() {
     unsafe extern "system" fn collect(hwnd: HWND, found: LPARAM) -> BOOL {
         // SAFETY: `found` points to the Vec below, alive for the enumeration.
@@ -608,16 +684,33 @@ fn ask_for_icons() {
     unsafe {
         let _ = EnumWindows(Some(collect), LPARAM(&raw mut windows as isize));
     }
-    // SAFETY: Read-only lookups, then payload-free posts.
+    // SAFETY: Read-only lookup of this process's id.
     let own = unsafe { GetCurrentProcessId() };
+    let folder = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    let mut navalia = std::collections::HashMap::new();
     for window in windows {
-        let mut pid = 0u32;
-        unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+        let pid = window_pid(window.0 as isize);
         if pid == own || pid == 0 || is_taskbar(window) {
             continue;
         }
+        if *navalia
+            .entry(pid)
+            .or_insert_with(|| is_navalia_process(pid, folder.as_deref()))
+        {
+            continue;
+        }
+        // SAFETY: A payload-free post.
         let _ = unsafe { PostMessageW(Some(window), created, WPARAM(0), LPARAM(0)) };
     }
+}
+
+fn is_taskbar_created(msg: u32) -> bool {
+    use std::sync::OnceLock;
+    static CREATED: OnceLock<u32> = OnceLock::new();
+    // SAFETY: Registers a well-known message name.
+    msg == *CREATED.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
 }
 
 fn is_taskbar(window: HWND) -> bool {
@@ -672,9 +765,12 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) 
             }
             answer.unwrap_or(LRESULT(0))
         }
-        // Commands and private messages apps send the taskbar (show the
-        // desktop, for one) are Explorer's to answer.
-        WM_COMMAND | WM_USER..WM_APP => forward(msg, w, l).unwrap_or(LRESULT(0)),
+        // Commands, hotkeys, private and registered messages apps send the
+        // taskbar (show the desktop, for one) are Explorer's to answer. Its
+        // own `TaskbarCreated` broadcast is not sent back to it.
+        WM_COMMAND | WM_HOTKEY | WM_USER.. if !is_taskbar_created(msg) => {
+            forward(msg, w, l).unwrap_or(LRESULT(0))
+        }
         WM_TIMER if w.0 == HOST_TIMER => {
             keep_in_front(hwnd);
             if let Some(shared) = host_shared() {
@@ -855,6 +951,35 @@ mod tests {
         assert!(!apply(&mut icons, &full, image(1), false, &serial));
         assert!(apply(&mut icons, &full, image(1), true, &serial));
         assert_eq!(icons.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_empty_add_is_not_retained() -> Result<(), String> {
+        let serial = AtomicU64::new(0);
+        let mut icons = Vec::new();
+        let empty_add = parse_notify(&message(NIM_ADD, 0, |_| {})).ok_or("x")?;
+        assert!(!apply(&mut icons, &empty_add, None, false, &serial));
+        assert!(icons.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_version_set_before_the_icon_is_known_applies_to_its_clicks() -> Result<(), String> {
+        let serial = AtomicU64::new(0);
+        let mut icons = Vec::new();
+        let version = parse_notify(&message(NIM_SETVERSION, 0, |bytes| {
+            bytes[NID_VERSION] = 4;
+        }))
+        .ok_or("x")?;
+        assert!(!apply(&mut icons, &version, None, false, &serial));
+        assert!(icons.is_empty(), "a version Explorer refused is not kept");
+        assert!(!apply(&mut icons, &version, None, true, &serial));
+        assert!(!icons[0].shown(), "nothing to draw yet");
+        let full = parse_notify(&message(NIM_MODIFY, NIF_MESSAGE | NIF_ICON, |_| {})).ok_or("x")?;
+        assert!(apply(&mut icons, &full, image(1), true, &serial));
+        assert!(icons[0].shown());
+        assert_eq!(icons[0].version, 4);
         Ok(())
     }
 

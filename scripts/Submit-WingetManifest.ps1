@@ -15,7 +15,7 @@ if (-not $version -or -not $sha256 -or $installer -notmatch '(?m)^PackageIdentif
 # WinGetCreate does not support fine-grained PATs, including ones that can
 # read all public repositories. They cannot perform this cross-repository flow.
 if ($env:WINGET_CREATE_GITHUB_TOKEN -clike 'github_pat_*') {
-    throw 'WINGET_TOKEN is a fine-grained PAT, which WinGetCreate does not support. Create a token under GitHub Settings > Developer settings > Personal access tokens > Tokens (classic), select public_repo, replace the WINGET_TOKEN Actions secret, and rerun this same published version with Submit enabled. See https://github.com/settings/tokens/new and FIRMA-DE-CODIGO.md.'
+    throw 'WINGET_TOKEN is a fine-grained PAT, which WinGetCreate does not support. Create a token under GitHub Settings > Developer settings > Personal access tokens > Tokens (classic), select public_repo, replace the WINGET_TOKEN Actions secret, and rerun this same published version with Submit enabled. See https://github.com/settings/tokens/new.'
 }
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Navalia-WinGet' }
 $lookupToken = if ($env:WINGET_CREATE_GITHUB_TOKEN) { $env:WINGET_CREATE_GITHUB_TOKEN } else { $env:GH_TOKEN }
@@ -54,7 +54,7 @@ if ($open) {
     return
 }
 if (-not $env:WINGET_CREATE_GITHUB_TOKEN) {
-    throw 'WINGET_TOKEN is missing. Add the repository Actions secret and rerun this workflow with Submit enabled; see FIRMA-DE-CODIGO.md. The validated artifact remains available.'
+    throw 'WINGET_TOKEN is missing. Add the repository Actions secret and rerun this workflow with Submit enabled. The validated artifact remains available.'
 }
 
 # Pin both version and digest; do not execute an unverified latest download.

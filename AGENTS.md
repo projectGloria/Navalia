@@ -18,7 +18,7 @@ Lightweight macOS-inspired dock and optional menu bar for Windows 10/11 (Rust Wi
 - `crates/navalia-core/` — Platform-independent dock layout and animation math (must stay free of Win32/OS dependencies).
 - `crates/navalia-shell/` — Windows shell integration (taskbar control, autostart, app launching, `dock_link` IPC).
 - `crates/navalia-config/` — Shared settings schema, defaults, and persistence used by both `navalia` and `navalia-settings`.
-- **Version Manifests:** `Cargo.toml` (`[workspace.package]`, inherited via `version.workspace = true` by `apps/dock`, `apps/settings/src-tauri`, and `crates/*`).
+- **Version Manifests:** `Cargo.toml` (`[workspace.package]`, inherited via `version.workspace = true` by `apps/dock`, `apps/settings/src-tauri`, and `crates/*`), `gloria.toml`, and `apps/settings/package.json`.
 
 ## Personal Rules (Brain)
 - **Git Branching:** Never create new branches or git worktrees. Always work directly on `main` until explicitly told otherwise.

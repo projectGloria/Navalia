@@ -19,7 +19,7 @@ pub enum Outcome {
 }
 
 #[derive(Debug, Error)]
-#[error("la operación de archivos del shell falló (código {0})")]
+#[error("shell file operation failed (code {0})")]
 pub struct FileError(i32);
 
 /// Sends files to the recycle bin.

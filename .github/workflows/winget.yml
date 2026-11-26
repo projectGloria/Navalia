@@ -74,7 +74,7 @@ jobs:
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           if (-not $env:WINGET_CREATE_GITHUB_TOKEN) {
-            throw 'Add the WINGET_TOKEN repository secret and rerun with Submit enabled. The validated manifests are saved as an artifact. See FIRMA-DE-CODIGO.md.'
+            throw 'Add the WINGET_TOKEN repository secret and rerun with Submit enabled. The validated manifests are saved as an artifact.'
           }
 
       - name: Install the runtime required by the pinned submission tool

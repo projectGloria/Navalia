@@ -288,7 +288,7 @@ impl App {
             // An auxiliary bar failure must not strand a hidden dock.
             if let Err(error) = bar.set_visible(!bar_fullscreen) {
                 crate::recovery::graphics_error(&error);
-                navalia_shell::log::line(&format!("visibilidad de la barra superior: {error:#}"));
+                navalia_shell::log::line(&format!("menu bar visibility: {error:#}"));
             }
             // Intelligent hiding (issue #61): the same test as the dock's,
             // against the bar's strip.
@@ -297,7 +297,7 @@ impl App {
                 && tracker::visible_rect(front)
                     .is_some_and(|rect| rects_overlap(bar.bounds(), rect));
             if let Err(error) = bar.set_covered(&self.gfx, covered) {
-                navalia_shell::log::line(&format!("ocultación inteligente de la barra: {error:#}"));
+                navalia_shell::log::line(&format!("menu bar smart hiding: {error:#}"));
             }
         }
         // Windows sometimes omits the shell event when a full-screen app
@@ -315,8 +315,8 @@ impl App {
         }
         if fullscreen != self.fullscreen {
             navalia_shell::log::line(&format!(
-                "{} por pantalla completa (al frente: {})",
-                if fullscreen { "se oculta" } else { "vuelve" },
+                "{} for fullscreen (foreground: {})",
+                if fullscreen { "hiding" } else { "showing" },
                 tracker::foreground_class()
             ));
             let previous = self.fullscreen;
@@ -347,7 +347,7 @@ impl App {
         // Updating an app name can fail transiently; it must never prevent
         // the dock or bar from returning after full-screen mode.
         if let Err(error) = self.update_menu_bar_app() {
-            eprintln!("navalia: nombre de la barra superior: {error:#}");
+            navalia_shell::log::line(&format!("menu bar title: {error:#}"));
         }
         Ok(())
     }

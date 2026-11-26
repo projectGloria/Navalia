@@ -14,6 +14,7 @@ pub mod launcher;
 pub mod log;
 pub mod monitor;
 pub mod names;
+pub mod paths;
 pub mod pins;
 pub mod power;
 pub mod recycle_bin;

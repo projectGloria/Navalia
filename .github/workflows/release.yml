@@ -1,38 +1,97 @@
+# projectGloria app release. Copy to .github/workflows/release.yml and edit only the `build` job.
+#
+# Runs only when started on purpose: /gloria-github-release, or `gh workflow run release.yml`.
+# Pushing to main never releases.
+#
+#   check   (shared)  version files agree, version not released yet, gloria.toml valid, picks newest gloria-setup
+#   build   (this repo) builds the app and uploads its files as the artifact `app`
+#   release (shared)  packs with that gloria-setup + dry run (or, without gloria.toml, publishes the files as-is),
+#                     then publishes GitHub Release v<version> with SHA256SUMS.txt
+#
+# The shared jobs live in projectGloria/GloriaSetup and are used from @main, so every release picks up
+# the newest checks and the newest gloria-setup without editing this file.
 name: Release
 
-# Push a tag matching the workspace version (for example v0.1.0) to build the
-# signed installer and attach it to a draft release. Review the draft on GitHub
-# and publish it by hand: only published releases reach the website download
-# link and the in-app updater.
 on:
-  push:
-    tags: ['v*']
-  # Manual runs exercise test-signing only, with no release or updater output.
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify everything, but do not publish
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   check:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci.yml
+    uses: projectGloria/GloriaSetup/.github/workflows/app-check.yml@main
 
-  installer:
+  build:
     needs: check
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # ---- App-specific: build, test, and copy the files to install into stage/ ----
+      # Installer apps: stage/ is the app folder (it must contain gloria.toml's main_exe).
+      # Extensions / Android: stage/ holds the files to publish (e.g. MyExt-<version>.zip, MyApp-<version>.apk).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          version: 11
-      - uses: actions/setup-node@v4
+          node-version: 22
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: apps/settings/pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
+          cache-on-failure: true
+
+      - name: Run offline release script checks
+        shell: pwsh
+        run: |
+          ./scripts/Test-WingetAutomation.ps1
+          ./scripts/Test-CodeSigning.ps1
+          ./scripts/Test-ReleaseAntivirus.ps1
+
+      - name: Build and test Settings UI
+        shell: pwsh
+        run: |
+          Push-Location apps/settings
+          try {
+            pnpm install --frozen-lockfile
+            if ($LASTEXITCODE) { throw 'pnpm install failed' }
+            pnpm test
+            if ($LASTEXITCODE) { throw 'pnpm test failed' }
+            pnpm build
+            if ($LASTEXITCODE) { throw 'pnpm build failed' }
+          } finally { Pop-Location }
+
+      - name: Check formatting, lints, and workspace tests
+        shell: pwsh
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE) { throw 'cargo fmt failed' }
+          cargo clippy --workspace --all-targets -- -D warnings
+          if ($LASTEXITCODE) { throw 'cargo clippy failed' }
+          cargo test --workspace --locked
+          if ($LASTEXITCODE) { throw 'cargo test failed' }
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p navalia -p navalia-settings
+          if ($LASTEXITCODE) { throw 'cargo build failed' }
 
       - name: Select signing lane and validate release configuration
         shell: pwsh
@@ -43,55 +102,35 @@ jobs:
           SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
-          $version = (cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
-            Where-Object name -eq 'navalia' | Select-Object -ExpandProperty version
-          $lane = ./scripts/Get-ReleaseSigningMode.ps1 -EventName $env:GITHUB_EVENT_NAME `
-            -Version $version -RefName $env:GITHUB_REF_NAME `
+          $lane = ./scripts/Get-ReleaseSigningMode.ps1 -DryRun ($env:DRY_RUN -eq 'true') `
+            -Version $env:VERSION `
             -Organization $env:SIGNPATH_ORGANIZATION_ID -Project $env:SIGNPATH_PROJECT_SLUG `
             -Policy $env:SIGNPATH_SIGNING_POLICY_SLUG `
             -ProductionThumbprint $env:SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT `
             -TokenPresent ([bool]$env:SIGNPATH_API_TOKEN)
-          "VERSION=$($lane.Version)" >> $env:GITHUB_ENV
           "SIGNING_MODE=$($lane.Mode)" >> $env:GITHUB_ENV
           "SIGNING_POLICY=$($lane.Policy)" >> $env:GITHUB_ENV
           Write-Host "Signing lane: $($lane.Mode)"
 
-      - name: Install settings dependencies
-        working-directory: apps/settings
-        run: pnpm install --frozen-lockfile
-
-      - name: Build installer
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.SIGNING_MODE != 'Test' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.SIGNING_MODE != 'Test' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: ./scripts/build-installer.ps1
-
-      # Windows code signing through SignPath Foundation (FIRMA-DE-CODIGO.md).
-      # Tag pushes without SignPath remain unsigned, as before. Manual runs
-      # are isolated test builds; configured tags require production. Two requests,
-      # approved by hand in SignPath: first the two programs, then the
-      # installer rebuilt around them. The installer must be signed before the
-      # updater signature (.sig) is made, or the updater rejects it.
       - name: Collect the programs to sign
         if: env.SIGNING_MODE != 'Unsigned'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force sign/binaries | Out-Null
-          Copy-Item target/release/navalia-settings.exe sign/binaries/
-          Copy-Item apps/settings/src-tauri/binaries/navalia-x86_64-pc-windows-msvc.exe sign/binaries/navalia.exe
+          Copy-Item target/release/navalia.exe sign/binaries/navalia.exe
+          Copy-Item target/release/navalia-settings.exe sign/binaries/navalia-settings.exe
 
       - name: Upload the programs to sign
         if: env.SIGNING_MODE != 'Unsigned'
         id: unsigned-binaries
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-binaries
           path: sign/binaries
 
       - name: Sign the programs
         if: env.SIGNING_MODE != 'Unsigned'
-        uses: signpath/github-action-submit-signing-request@v3
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -100,7 +139,6 @@ jobs:
           artifact-configuration-slug: binaries
           github-artifact-id: ${{ steps.unsigned-binaries.outputs.artifact-id }}
           wait-for-completion: true
-          # Leaves time to approve the request in SignPath.
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: sign/binaries-signed
 
@@ -115,97 +153,17 @@ jobs:
             -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-binaries `
             -Path sign/binaries-signed/navalia.exe,sign/binaries-signed/navalia-settings.exe
 
-      # Tauri marks the settings program while bundling; it is already marked
-      # from the first build, so bundling again keeps the signature intact
-      # (checked locally with a test certificate).
-      - name: Rebuild the installer around the signed programs
-        if: env.SIGNING_MODE != 'Unsigned'
-        timeout-minutes: 10
-        shell: pwsh
-        env:
-          PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
-        run: |
-          Copy-Item sign/binaries-signed/navalia-settings.exe target/release/ -Force
-          Copy-Item sign/binaries-signed/navalia.exe apps/settings/src-tauri/binaries/navalia-x86_64-pc-windows-msvc.exe -Force
-          '{ "bundle": { "createUpdaterArtifacts": false } }' | Set-Content -Encoding ascii no-updater.json
-          Push-Location apps/settings
-          pnpm tauri bundle --bundles nsis --config src-tauri/tauri.bundle.conf.json --config ../../no-updater.json
-          if ($LASTEXITCODE) { throw 'tauri bundle failed' }
-          Pop-Location
-          ./scripts/Assert-Authenticode.ps1 -Mode $env:SIGNING_MODE `
-            -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-bundled `
-            -Path target/release/navalia-settings.exe,apps/settings/src-tauri/binaries/navalia-x86_64-pc-windows-msvc.exe
-          New-Item -ItemType Directory -Force sign/installer | Out-Null
-          Copy-Item "target/release/bundle/nsis/Navalia_${env:VERSION}_x64-setup.exe" sign/installer/Navalia-Setup.exe
-
-      - name: Upload the installer to sign
-        if: env.SIGNING_MODE != 'Unsigned'
-        id: unsigned-installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: unsigned-installer
-          path: sign/installer
-
-      - name: Sign the installer
-        if: env.SIGNING_MODE != 'Unsigned'
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ env.SIGNING_POLICY }}
-          artifact-configuration-slug: installer
-          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: sign/installer-signed
-
-      - name: Verify and use the signed installer
-        if: env.SIGNING_MODE != 'Unsigned'
-        timeout-minutes: 5
-        shell: pwsh
-        env:
-          PRODUCTION_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
-        run: |
-          $setup = (Resolve-Path "target/release/bundle/nsis").Path + "/Navalia_${env:VERSION}_x64-setup.exe"
-          Copy-Item sign/installer-signed/Navalia-Setup.exe $setup -Force
-          ./scripts/Assert-Authenticode.ps1 -Mode $env:SIGNING_MODE `
-            -ProductionThumbprint $env:PRODUCTION_THUMBPRINT -ReportDirectory sign/verification-installer -Path $setup
-
-      - name: Sign the final production installer for the updater
-        if: env.SIGNING_MODE == 'Production'
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          $setup = (Resolve-Path "target/release/bundle/nsis").Path + "/Navalia_${env:VERSION}_x64-setup.exe"
-          Push-Location apps/settings
-          pnpm tauri signer sign --app-version $env:VERSION $setup
-          if ($LASTEXITCODE) { throw 'tauri signer sign failed' }
-          Pop-Location
-
-      - name: Keep signing artifacts and diagnostics
-        if: always() && env.SIGNING_MODE != '' && env.SIGNING_MODE != 'Unsigned'
-        uses: actions/upload-artifact@v7
-        with:
-          name: signpath-${{ env.SIGNING_MODE }}-${{ env.VERSION }}
-          path: |
-            sign/binaries-signed/
-            sign/installer-signed/
-            sign/verification-*/
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: Explain the test result
-        if: always() && env.SIGNING_MODE == 'Test'
+      - name: Stage release binaries
         shell: pwsh
         run: |
-          @'
-          SignPath test lane only. No draft release, latest.json or updater signature is produced.
-          Review the verification steps and the signpath-Test artifact, including signature-report.json.
-          If a signature remains invalid, send its status/message and the signing request IDs to SignPath support.
-          '@ >> $env:GITHUB_STEP_SUMMARY
+          New-Item -ItemType Directory -Force stage | Out-Null
+          if ($env:SIGNING_MODE -eq 'Unsigned') {
+            Copy-Item target/release/navalia.exe stage/navalia.exe -Force
+            Copy-Item target/release/navalia-settings.exe stage/navalia-settings.exe -Force
+          } else {
+            Copy-Item sign/binaries-signed/navalia.exe stage/navalia.exe -Force
+            Copy-Item sign/binaries-signed/navalia-settings.exe stage/navalia-settings.exe -Force
+          }
 
       - name: Update Defender definitions for release analysis
         if: env.SIGNING_MODE != 'Test'
@@ -218,62 +176,22 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          ./scripts/Assert-ReleaseAntivirus.ps1 -ReportDirectory antivirus-report -Path `
-            target/release/navalia-settings.exe,apps/settings/src-tauri/binaries/navalia-x86_64-pc-windows-msvc.exe,"target/release/bundle/nsis/Navalia_${env:VERSION}_x64-setup.exe" `
-            -DownloadPath "target/release/bundle/nsis/Navalia_${env:VERSION}_x64-setup.exe" `
-            -DownloadSource "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/Navalia_${env:VERSION}_x64-setup.exe"
+          ./scripts/Assert-ReleaseAntivirus.ps1 -ReportDirectory antivirus-report `
+            -Path stage/navalia.exe,stage/navalia-settings.exe
 
-      - name: Keep antivirus verification evidence
-        if: always() && env.SIGNING_MODE != '' && env.SIGNING_MODE != 'Test'
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: antivirus-${{ env.VERSION }}
-          path: antivirus-report/
-          if-no-files-found: warn
-          retention-days: 14
+          name: app
+          path: stage/
+          if-no-files-found: error
 
-      # latest.json is what the in-app updater reads; Navalia-Setup.exe is a
-      # stable name for the website's "latest" download link.
-      - name: Prepare release files
-        if: env.SIGNING_MODE != 'Test'
-        shell: pwsh
-        run: |
-          $nsis = 'target/release/bundle/nsis'
-          $setup = "Navalia_${env:VERSION}_x64-setup.exe"
-          $signature = Get-Content "$nsis/$setup.sig" -Raw
-          $repo = "https://github.com/$env:GITHUB_REPOSITORY"
-          $manifest = [ordered]@{
-            version   = $env:VERSION
-            notes     = "$repo/releases/tag/$env:GITHUB_REF_NAME"
-            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            platforms = [ordered]@{
-              'windows-x86_64' = [ordered]@{
-                signature = $signature.Trim()
-                url       = "$repo/releases/download/$env:GITHUB_REF_NAME/$setup"
-              }
-            }
-          }
-          New-Item -ItemType Directory -Force upload | Out-Null
-          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM upload/latest.json
-          Copy-Item "$nsis/$setup" upload/
-          Copy-Item "$nsis/$setup.sig" upload/
-          Copy-Item "$nsis/$setup" upload/Navalia-Setup.exe
-
-          # The release text is this version's section of CHANGELOG.md (English
-          # and Spanish), between its heading and the next one.
-          $lines = Get-Content CHANGELOG.md
-          $start = [array]::IndexOf($lines, "## [$env:VERSION]")
-          if ($start -lt 0) { throw "CHANGELOG.md has no section for $env:VERSION" }
-          $rest = $lines[($start + 1)..($lines.Count - 1)]
-          $end = ($rest | Select-String -Pattern '^## \[' | Select-Object -First 1).LineNumber
-          $section = if ($end) { $rest[0..($end - 2)] } else { $rest }
-          $section | Set-Content -Encoding utf8NoBOM notes.md
-
-      - name: Create draft release
-        if: env.SIGNING_MODE != 'Test'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create $env:GITHUB_REF_NAME (Get-ChildItem upload).FullName `
-            --draft --notes-file notes.md --title "Navalia $env:GITHUB_REF_NAME"
+  release:
+    needs: [check, build]
+    uses: projectGloria/GloriaSetup/.github/workflows/app-release.yml@main
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.check.outputs.version }}
+      installer: ${{ needs.check.outputs.installer == 'true' }}
+      gloria_setup: ${{ needs.check.outputs.gloria_setup }}
+      dry_run: ${{ inputs.dry_run }}
