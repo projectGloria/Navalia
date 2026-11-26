@@ -28,6 +28,28 @@ use super::{
     shorten, window_of, with_app, with_app_then,
 };
 
+/// A left click on Navalia's tray icon.
+pub fn open_settings() {
+    run_outside(Outside::OpenSettings);
+}
+
+/// A right click on Navalia's tray icon: Settings and Quit.
+pub fn show_navalia_menu(anchor: POINT, placement: menu::Placement) {
+    with_app_then("tray icon menu", move |app| {
+        let dark = if placement == menu::Placement::Below {
+            !crate::appearance::menu_bar_light()
+        } else {
+            !crate::appearance::light()
+        };
+        Ok(Some(Outside::NavaliaMenu {
+            gfx: app.gfx.clone(),
+            anchor,
+            placement,
+            dark,
+        }))
+    });
+}
+
 pub(super) fn run_outside(outside: Outside) {
     let submit = |action| {
         let result = shell_work::dispatch(action);
@@ -55,6 +77,33 @@ pub(super) fn run_outside(outside: Outside) {
         }),
         Outside::EmptyBin => submit(ShellAction::EmptyBin),
         Outside::QuitDock => request_quit(),
+        Outside::NavaliaMenu {
+            gfx,
+            anchor,
+            placement,
+            dark,
+        } => {
+            const SETTINGS: u32 = 1;
+            const QUIT: u32 = 2;
+            let t = strings::text();
+            let items = [
+                MenuItem::action(SETTINGS, t.settings),
+                MenuItem::Separator,
+                MenuItem::action(QUIT, t.quit_dock),
+            ];
+            with_app("open tray icon menu", |app| {
+                app.menu_open = true;
+                Ok(())
+            });
+            let chosen = menu::show(&gfx, main_window(), &items, anchor, dark, placement);
+            with_app("close tray icon menu", App::after_menu);
+            match chosen {
+                Some(SETTINGS) => run_outside(Outside::OpenSettings),
+                // The usual exit path, which gives the Windows taskbar back.
+                Some(QUIT) => request_quit(),
+                _ => {}
+            }
+        }
         Outside::OpenAsAdmin(id) => submit(ShellAction::OpenAsAdmin { id }),
         Outside::ShowDesktop => launcher::show_desktop(),
         Outside::UnpinFromTaskbar(id) => submit(ShellAction::Unpin { id }),

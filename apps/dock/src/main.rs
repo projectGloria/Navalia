@@ -28,6 +28,7 @@ mod media;
 mod menu;
 mod menubar;
 mod moments;
+mod notify_icon;
 mod overlays;
 mod recovery;
 mod scene;

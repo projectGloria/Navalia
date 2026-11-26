@@ -83,6 +83,7 @@ use crate::{
 };
 
 use menus::run_outside;
+pub use menus::{open_settings, show_navalia_menu};
 
 pub use events::{
     drag_enter, drag_leave, drag_over, drop_files, group_view_menu, group_view_moved,
@@ -419,6 +420,13 @@ pub(crate) enum Outside {
         program: String,
     },
     ShowDesktop,
+    /// The right-click menu of Navalia's own tray icon.
+    NavaliaMenu {
+        gfx: Gfx,
+        anchor: POINT,
+        placement: menu::Placement,
+        dark: bool,
+    },
 }
 
 pub(crate) struct MenuRequest {

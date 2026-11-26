@@ -402,7 +402,10 @@ pub fn run() -> Result<()> {
         "UI ready {} ms after app::run; entering the message loop",
         startup.elapsed().as_millis()
     ));
+    // Navalia's own tray icon, removed again when the loop ends.
+    let tray_icon = crate::notify_icon::NotifyIcon::create();
     message_loop();
+    drop(tray_icon);
     // The taskbar's overlay calls go back to Explorer.
     crate::overlays::stop();
     // SAFETY: The drop target was registered on this window in this thread.

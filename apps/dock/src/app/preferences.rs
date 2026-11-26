@@ -357,6 +357,10 @@ impl App {
             )
             .inspect_err(|error| navalia_shell::log::line(&format!("menu bar: {error:#}")))
             .ok();
+            // Its tray host starts empty; show Navalia's own icon there too.
+            if self.menubar.is_some() {
+                crate::notify_icon::announce_again();
+            }
         }
         if let Some(bar) = &mut self.menubar {
             bar.set_clock_target(self.config.menu_bar_clock_target.as_deref());
