@@ -48,5 +48,6 @@ pub(super) const TEXT: Strings = Strings {
     jump_recent: "最近使用",
     jump_tasks: "任务",
     hide_from_menu_bar: "从菜单栏隐藏",
+    remove_from_shelf: "从架子移除",
     app_menu: "应用菜单…",
 };

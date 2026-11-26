@@ -407,32 +407,66 @@ impl MenuBar {
                     .as_ref()
                     .and_then(|look| look.tray_items.get(idx))
                     .cloned()
+                    && !self.click_tray_icon(&item)
                 {
-                    let now = Instant::now();
-                    // SAFETY: Reads a system setting.
-                    let window = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
-                    let double = self.tray_last_click.is_some_and(|(key, at)| {
-                        key == item.key && now.duration_since(at) <= window
-                    });
-                    // A third click starts over, as with a mouse.
-                    self.tray_last_click = (!double).then_some((item.key, now));
-                    let kind = if double {
-                        TrayClick::Double
-                    } else {
-                        TrayClick::Left
-                    };
-                    if !tray::click(&item, kind, cursor_anchor()) {
-                        // Its app closed without removing the icon.
-                        if let Some(host) = &self.tray_host {
-                            host.drop_dead_icons();
+                    return self.tray_changed(gfx);
+                }
+            }
+            Some(Action::ShelfItem(idx)) => {
+                let Some((path, tray)) = self.look.as_ref().and_then(|look| {
+                    let item = look.shelf.get(idx)?;
+                    Some((
+                        item.path.clone(),
+                        look.shelf_tray.get(idx).cloned().flatten(),
+                    ))
+                }) else {
+                    return Ok(());
+                };
+                // An app that is running with a tray icon answers as that icon
+                // would; anything else is opened like a double-click in Explorer.
+                match tray {
+                    Some(icon) if self.click_tray_icon(&icon) => {}
+                    Some(_) => {
+                        if let Err(error) = launcher::open(&path) {
+                            navalia_shell::log::line(&format!("shelf item {path}: {error}"));
                         }
                         return self.tray_changed(gfx);
+                    }
+                    None => {
+                        if let Err(error) = launcher::open(&path) {
+                            navalia_shell::log::line(&format!("shelf item {path}: {error}"));
+                        }
                     }
                 }
             }
             None => {}
         }
         Ok(())
+    }
+
+    /// Clicks a tray icon as Explorer would, telling a double-click from two
+    /// clicks. `false` when its app closed without removing the icon.
+    fn click_tray_icon(&mut self, item: &TrayIcon) -> bool {
+        let now = Instant::now();
+        // SAFETY: Reads a system setting.
+        let window = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
+        let double = self
+            .tray_last_click
+            .is_some_and(|(key, at)| key == item.key && now.duration_since(at) <= window);
+        // A third click starts over, as with a mouse.
+        self.tray_last_click = (!double).then_some((item.key, now));
+        let kind = if double {
+            TrayClick::Double
+        } else {
+            TrayClick::Left
+        };
+        if tray::click(item, kind, cursor_anchor()) {
+            return true;
+        }
+        if let Some(host) = &self.tray_host {
+            host.drop_dead_icons();
+        }
+        false
     }
 
     pub fn press_volume(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {

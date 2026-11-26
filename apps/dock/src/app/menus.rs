@@ -175,7 +175,18 @@ pub(super) fn run_outside(outside: Outside) {
             if menu.tray.is_some() {
                 items.push(MenuItem::action(APP_MENU, t.app_menu));
             }
-            items.push(MenuItem::action(HIDE, t.hide_from_menu_bar));
+            let shelf_item = menu
+                .key
+                .strip_prefix(crate::menubar::SHELF_KEY_PREFIX)
+                .map(str::to_owned);
+            items.push(MenuItem::action(
+                HIDE,
+                if shelf_item.is_some() {
+                    t.remove_from_shelf
+                } else {
+                    t.hide_from_menu_bar
+                },
+            ));
             items.push(MenuItem::Separator);
             items.push(MenuItem::action(SETTINGS, t.settings));
             let owner = main_window();
@@ -195,9 +206,14 @@ pub(super) fn run_outside(outside: Outside) {
                         );
                     }
                 }
-                Some(HIDE) => with_app("hide menu bar icon", move |app| {
-                    app.hide_menu_bar_item(&menu.key)
-                }),
+                Some(HIDE) => match shelf_item {
+                    Some(item) => {
+                        with_app("remove shelf item", move |app| app.remove_shelf_item(&item))
+                    }
+                    None => with_app("hide menu bar icon", move |app| {
+                        app.hide_menu_bar_item(&menu.key)
+                    }),
+                },
                 Some(SETTINGS) => run_outside(Outside::OpenSettings),
                 _ => {}
             }

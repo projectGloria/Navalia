@@ -135,6 +135,17 @@ const BUBBLE_VERTICAL_INSET: f32 = 2.5;
 const BUBBLE_MUSIC_WIDTH: f32 = 164.0;
 const BUBBLE_PROVIDER_WIDTH: f32 = 68.0;
 const BUBBLE_USAGE_PADDING: f32 = 16.0;
+/// The AI tools strip and the shelf share these, so their icons match.
+const STRIP_ICON: f32 = 16.0;
+const STRIP_ICON_MIN: f32 = 12.0;
+const STRIP_ITEM_GAP: f32 = 14.0;
+const STRIP_DIVIDER_HEIGHT: f32 = 11.0;
+/// Room between the shelf and its neighbours (the dock, the music island).
+const SHELF_EDGE_GAP: f32 = 12.0;
+/// Shelf icons are read once at this side and scaled to the bar's.
+const SHELF_ICON_LOAD: u32 = 48;
+/// How a shelf item's right-click menu names it: this, then its path.
+pub const SHELF_KEY_PREFIX: &str = "shelf:";
 const PANEL_GAP: f32 = 5.0;
 const PANEL_RADIUS: f32 = 18.0;
 const PANEL_SHADOW_MARGIN: f32 = 20.0;
@@ -211,6 +222,8 @@ enum Action {
     SystemMonitor,
     /// A live Windows 11 notification-area icon.
     TrayItem(usize),
+    /// A file, folder or program on the user's shelf (`Look::shelf`).
+    ShelfItem(usize),
 }
 
 impl Action {
@@ -233,7 +246,7 @@ impl Action {
             Self::Camera => "camera",
             Self::Bluetooth => "bluetooth",
             Self::SystemMonitor => "system_monitor",
-            Self::TrayItem(_) => return None,
+            Self::TrayItem(_) | Self::ShelfItem(_) => return None,
         })
     }
 }
@@ -293,6 +306,53 @@ impl Default for MenuBarWidgets {
     }
 }
 
+/// One thing on the user's shelf (`Config::menu_bar_shelf`).
+#[derive(Clone, Debug)]
+pub(super) struct ShelfItem {
+    pub(super) path: String,
+    /// The program it runs (`discord.exe`, lowercase), to find its tray
+    /// icon; `None` for folders and documents.
+    pub(super) program: Option<String>,
+    pub(super) icon: Option<Arc<navalia_shell::icons::IconImage>>,
+}
+
+impl PartialEq for ShelfItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.program == other.program
+            && match (&self.icon, &other.icon) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+/// The program a shelf entry runs: an `.exe` itself, or the one a shortcut
+/// opens. Lowercase file name only, as `TrayIcon::program` has it.
+pub(super) fn shelf_program(path: &str) -> Option<String> {
+    let target = if path.to_ascii_lowercase().ends_with(".lnk") {
+        navalia_shell::pins::shortcut_target(std::path::Path::new(path))?
+    } else {
+        path.to_owned()
+    };
+    navalia_shell::tracker::is_program(&target)
+        .then(|| {
+            std::path::Path::new(&target)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_lowercase())
+        })
+        .flatten()
+}
+
+/// Whether a shelf item stands for `icon`'s app, so the tray need not show it.
+pub(super) fn shelf_claims(shelf: &[ShelfItem], icon: &TrayIcon) -> bool {
+    !icon.program.is_empty()
+        && shelf
+            .iter()
+            .any(|item| item.program.as_deref() == Some(icon.program.as_str()))
+}
+
 /// Network, volume and taskbar buttons, read only when Windows reports a change.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Status {
@@ -350,6 +410,10 @@ struct Look {
     tray_items: Vec<TrayIcon>,
     /// `Config::menu_bar_hidden_items`.
     hidden: Vec<String>,
+    shelf: Vec<ShelfItem>,
+    /// Per shelf item, the live tray icon of the program it runs. That icon
+    /// leaves `tray_items`, so the app shows once, on the shelf.
+    shelf_tray: Vec<Option<TrayIcon>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -687,6 +751,10 @@ pub struct MenuBar {
     tray_last_click: Option<(IconKey, Instant)>,
     /// Icons the user hid (`Config::menu_bar_hidden_items`).
     hidden: Vec<String>,
+    /// `Config::menu_bar_shelf`, with each entry's icon.
+    shelf: Vec<ShelfItem>,
+    /// Drawn shelf icons by path, with the side they were drawn at.
+    shelf_brushes: HashMap<String, (u32, CompositionSurfaceBrush)>,
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -1006,6 +1074,8 @@ impl MenuBar {
             tray_icons: HashMap::new(),
             tray_last_click: None,
             hidden: Vec::new(),
+            shelf: Vec::new(),
+            shelf_brushes: HashMap::new(),
         };
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
@@ -1178,6 +1248,47 @@ impl MenuBar {
         self.hidden = hidden.to_vec();
         self.sync_monitor(self.shown());
         self.refresh(gfx)
+    }
+
+    /// The user's shelf (`Config::menu_bar_shelf`), in order.
+    pub fn set_shelf(&mut self, gfx: &Gfx, paths: &[String]) -> Result<()> {
+        if self.shelf.len() == paths.len()
+            && self
+                .shelf
+                .iter()
+                .zip(paths)
+                .all(|(item, path)| &item.path == path)
+        {
+            return Ok(());
+        }
+        let old = std::mem::take(&mut self.shelf);
+        self.shelf = paths
+            .iter()
+            .map(|path| {
+                old.iter()
+                    .find(|item| &item.path == path)
+                    .cloned()
+                    .unwrap_or_else(|| ShelfItem {
+                        path: path.clone(),
+                        program: shelf_program(path),
+                        icon: navalia_shell::icons::load_icon(path, SHELF_ICON_LOAD)
+                            .inspect_err(|error| {
+                                navalia_shell::log::line(&format!("shelf icon {path}: {error}"));
+                            })
+                            .ok()
+                            .map(Arc::new),
+                    })
+            })
+            .collect();
+        self.shelf_brushes
+            .retain(|path, _| self.shelf.iter().any(|item| &item.path == path));
+        self.refresh(gfx)
+    }
+
+    /// The live tray icon a shelf entry stands in for, if its program has one.
+    pub(super) fn shelf_tray_icon(&self, program: Option<&str>) -> Option<&TrayIcon> {
+        let program = program?;
+        self.tray_items.iter().find(|icon| icon.program == program)
     }
 
     pub(super) fn is_hidden(&self, key: &str) -> bool {

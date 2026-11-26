@@ -169,7 +169,28 @@ pub(super) fn hide_menu_bar_item(path: &Path, key: &str) -> Result<Config> {
     })?)
 }
 
+/// Takes `item` off the shelf in the saved settings.
+pub(super) fn remove_shelf_item(path: &Path, item: &str) -> Result<Config> {
+    Ok(navalia_config::update(path, |saved| {
+        let mut saved = saved.unwrap_or_default();
+        saved
+            .menu_bar_shelf
+            .retain(|entry| entry.to_lowercase() != item.to_lowercase());
+        Ok(saved)
+    })?)
+}
+
 impl App {
+    /// Takes an item the user right-clicked off the shelf, and remembers it.
+    pub(super) fn remove_shelf_item(&mut self, item: &str) -> Result<()> {
+        let saved = remove_shelf_item(&navalia_config::default_path(), item)?;
+        self.config.menu_bar_shelf = saved.menu_bar_shelf;
+        if let Some(bar) = &mut self.menubar {
+            bar.set_shelf(&self.gfx, &self.config.menu_bar_shelf)?;
+        }
+        Ok(())
+    }
+
     /// Hides a menu bar icon the user right-clicked, and remembers it.
     pub(super) fn hide_menu_bar_item(&mut self, key: &str) -> Result<()> {
         let saved = hide_menu_bar_item(&navalia_config::default_path(), key)?;
@@ -379,6 +400,7 @@ impl App {
                 .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| bar.set_hidden_items(&self.gfx, &self.config.menu_bar_hidden_items))
+                .and_then(|()| bar.set_shelf(&self.gfx, &self.config.menu_bar_shelf))
                 .and_then(|()| {
                     let covered = primary_monitor()
                         .is_some_and(|monitor| tracker::foreground_is_fullscreen(monitor.screen));

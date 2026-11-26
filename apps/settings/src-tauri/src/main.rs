@@ -116,6 +116,30 @@ async fn pick_clock_target(
     .map_err(|error| error.to_string())
 }
 
+/// Asks for something to put on the menu bar shelf: a folder when `folder`,
+/// else any file (an app, a shortcut, a document).
+#[tauri::command]
+async fn pick_shelf_item(
+    window: tauri::WebviewWindow,
+    folder: bool,
+    apps: String,
+    all: String,
+) -> Result<Option<String>, String> {
+    let owner = window
+        .hwnd()
+        .map(|hwnd| hwnd.0 as isize)
+        .unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        if folder {
+            navalia_shell::folder::pick(owner, None)
+        } else {
+            navalia_shell::folder::pick_file(owner, None, &apps, &all)
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn get_autostart() -> Result<bool, String> {
     let dock = dock_exe().map_err(|error| error.to_string())?;
@@ -373,6 +397,7 @@ fn main() {
             open_animation_settings,
             pick_folder,
             pick_clock_target,
+            pick_shelf_item,
             check_update,
             install_update,
             open_release_notes,

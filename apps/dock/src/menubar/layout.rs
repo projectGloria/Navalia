@@ -243,6 +243,27 @@ pub(super) fn cursor_anchor() -> (i32, i32) {
     (point.x, point.y)
 }
 
+/// Where `count` icons of `side` go, `gap` apart, centred in `region`; as
+/// many as fit, from the first.
+pub(super) fn shelf_spans(region: Span, count: usize, side: f32, gap: f32) -> Vec<Span> {
+    if count == 0 || side <= 0.0 || region.width() < side {
+        return Vec::new();
+    }
+    let fit = (((region.width() + gap) / (side + gap)).floor() as usize).min(count);
+    let total = fit as f32 * side + fit.saturating_sub(1) as f32 * gap;
+    let mut left = (region.left + (region.width() - total) / 2.0).round();
+    (0..fit)
+        .map(|_| {
+            let span = Span {
+                left,
+                right: left + side,
+            };
+            left += side + gap;
+            span
+        })
+        .collect()
+}
+
 pub(super) fn tray_item_spans(
     start_x: f32,
     max_x: f32,
@@ -399,6 +420,12 @@ impl MenuBar {
             Action::TrayItem(idx) => {
                 let item = self.look.as_ref()?.tray_items.get(*idx)?.clone();
                 (item.preference_key(), Some(item))
+            }
+            Action::ShelfItem(idx) => {
+                let look = self.look.as_ref()?;
+                let path = &look.shelf.get(*idx)?.path;
+                let tray = look.shelf_tray.get(*idx).cloned().flatten();
+                (format!("{SHELF_KEY_PREFIX}{path}"), tray)
             }
             other => (other.preference_key()?.to_owned(), None),
         };

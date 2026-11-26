@@ -48,5 +48,6 @@ pub(super) const TEXT: Strings = Strings {
     change_folder: "&Changer de dossier…",
     remove_from_dock: "&Retirer du Dock",
     hide_from_menu_bar: "&Masquer de la barre des menus",
+    remove_from_shelf: "&Retirer de l’étagère",
     app_menu: "&Menu de l’app…",
 };

@@ -1565,4 +1565,59 @@ mod mascot_tests {
         let crowded = tray_item_spans(14.0, 40.0, 16.0, 10.0, 5);
         assert_eq!(crowded, vec![(14.0, 30.0)]);
     }
+
+    #[test]
+    fn shelf_icons_are_centred_and_the_ones_that_do_not_fit_are_dropped() {
+        let region = Span {
+            left: 100.0,
+            right: 200.0,
+        };
+        let spans = shelf_spans(region, 2, 16.0, 14.0);
+        assert_eq!(spans.len(), 2);
+        // 16 + 14 + 16 = 46 wide, centred in 100 px.
+        assert_eq!(spans[0].left, 127.0);
+        assert_eq!(spans[1].left, 157.0);
+        assert_eq!(spans[1].right - spans[1].left, 16.0);
+
+        // 100 px holds three 16 px icons 14 px apart, not four.
+        assert_eq!(shelf_spans(region, 6, 16.0, 14.0).len(), 3);
+        assert!(shelf_spans(region, 0, 16.0, 14.0).is_empty());
+        let narrow = Span {
+            left: 100.0,
+            right: 110.0,
+        };
+        assert!(shelf_spans(narrow, 3, 16.0, 14.0).is_empty());
+    }
+
+    #[test]
+    fn a_shelf_program_takes_its_tray_icon_and_others_stay_in_the_tray() {
+        assert_eq!(
+            shelf_program(r"C:\Program Files\Nothing\Nothing.EXE").as_deref(),
+            Some("nothing.exe")
+        );
+        assert_eq!(shelf_program(r"C:\Users\you\Documents\notes.txt"), None);
+        assert_eq!(shelf_program(r"C:\Users\you\Documents"), None);
+
+        let shelf = vec![ShelfItem {
+            path: r"C:\Program Files\Nothing\Nothing.exe".to_owned(),
+            program: shelf_program(r"C:\Program Files\Nothing\Nothing.exe"),
+            icon: None,
+        }];
+        let icon = |program: &str| TrayIcon {
+            key: navalia_shell::tray::IconKey::Window { hwnd: 1, uid: 1 },
+            owner: 1,
+            owner_pid: 1,
+            program: program.to_owned(),
+            uid: 1,
+            callback: 0,
+            version: 0,
+            tip: String::new(),
+            hidden: false,
+            image: None,
+            serial: 0,
+        };
+        assert!(shelf_claims(&shelf, &icon("nothing.exe")));
+        assert!(!shelf_claims(&shelf, &icon("discord.exe")));
+        assert!(!shelf_claims(&shelf, &icon("")));
+    }
 }

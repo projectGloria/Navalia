@@ -48,5 +48,6 @@ pub(super) const TEXT: Strings = Strings {
     jump_recent: "حديثة",
     jump_tasks: "المهام",
     hide_from_menu_bar: "إخفاء من شريط القوائم",
+    remove_from_shelf: "إزالة من الرف",
     app_menu: "قائمة التطبيق…",
 };

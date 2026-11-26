@@ -1007,6 +1007,41 @@ impl MenuBar {
             }
         });
 
+        // The shelf takes what is left right of the dock: up to the music
+        // island, and on the wider side of the AI tools when they sit here too.
+        let edge = px(SHELF_EDGE_GAP);
+        let shelf_end = music.map_or(right_start, |span| span.left) - edge;
+        let shelf_region = match usage.filter(|span| span.left >= left_end) {
+            Some(strip) => {
+                let before = Span {
+                    left: left_end,
+                    right: strip.left - edge,
+                };
+                let after = Span {
+                    left: strip.right + edge,
+                    right: shelf_end,
+                };
+                if after.width() > before.width() {
+                    after
+                } else {
+                    before
+                }
+            }
+            None => Span {
+                left: left_end,
+                right: shelf_end,
+            },
+        };
+        self.draw_shelf(
+            gfx,
+            look,
+            effective_light,
+            layers,
+            shelf_region,
+            bar_y,
+            bar_height,
+        )?;
+
         self.music_trigger_span = music.unwrap_or_default();
         self.usage_trigger_span = usage.unwrap_or_default();
         if music.is_none() && usage.is_none() {
@@ -1931,6 +1966,101 @@ pub(super) fn usage_moment(
         })
 }
 
+fn strip_divider_color(effective_light: bool) -> Color {
+    if effective_light {
+        rgba(0, 0, 0, 32)
+    } else {
+        rgba(255, 255, 255, 36)
+    }
+}
+
+impl MenuBar {
+    /// The user's shelf: icons only, at the AI tools strip's size, spacing
+    /// and dividers, centred in `region`. What does not fit is left out.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The shelf is laid out in the space the island leaves on the bar"
+    )]
+    fn draw_shelf(
+        &mut self,
+        gfx: &Gfx,
+        look: &Look,
+        effective_light: bool,
+        layers: &VisualCollection,
+        region: Span,
+        bar_y: f32,
+        bar_height: f32,
+    ) -> Result<()> {
+        if look.shelf.is_empty() {
+            return Ok(());
+        }
+        let c = &gfx.compositor;
+        let px = |v: f32| (v * look.scale).round();
+        let side = px(STRIP_ICON).max(STRIP_ICON_MIN);
+        let gap = px(STRIP_ITEM_GAP);
+        let slop = px(4.0);
+        let divider_h = px(STRIP_DIVIDER_HEIGHT).max(1.0);
+        let divider_color = strip_divider_color(effective_light);
+        let ink = if effective_light {
+            Ink::Dark
+        } else {
+            Ink::Light
+        };
+        let top = bar_y + (bar_height - side) / 2.0;
+        let side_px = side as u32;
+        let spans = shelf_spans(region, look.shelf.len(), side, gap);
+        for (index, (span, item)) in spans.iter().zip(&look.shelf).enumerate() {
+            if index > 0 {
+                add_visual(
+                    c,
+                    layers,
+                    &c.CreateColorBrushWithColor(divider_color)?.cast()?,
+                    span.left - gap / 2.0,
+                    bar_y + (bar_height - divider_h) / 2.0,
+                    px(1.0).max(1.0),
+                    divider_h,
+                )?;
+            }
+            let brush = match (&item.icon, self.shelf_brushes.get(&item.path)) {
+                (Some(_), Some((drawn, brush))) if *drawn == side_px => Some(brush.clone()),
+                (Some(image), _) => {
+                    let brush = gfx.icon_brush(image, side_px)?;
+                    self.shelf_brushes
+                        .insert(item.path.clone(), (side_px, brush.clone()));
+                    Some(brush)
+                }
+                (None, _) => None,
+            };
+            if let Some(brush) = brush {
+                add_visual(c, layers, &brush.cast()?, span.left, top, side, side)?;
+            } else {
+                // No picture to show: a folder or a page glyph instead.
+                let glyph = if std::path::Path::new(&item.path).is_dir() {
+                    '\u{E8B7}'
+                } else {
+                    '\u{E7C3}'
+                };
+                let label = gfx.glyph_brush(&[(glyph, 1.0)], look.scale, ink)?;
+                add_visual(
+                    c,
+                    layers,
+                    &label.brush.cast()?,
+                    span.left + (side - label.width) / 2.0,
+                    bar_y + (bar_height - label.height) / 2.0,
+                    label.width,
+                    label.height,
+                )?;
+            }
+            self.zones.push((
+                span.left - slop,
+                span.right + slop,
+                Action::ShelfItem(index),
+            ));
+        }
+        Ok(())
+    }
+}
+
 struct UsageStripItem {
     provider: Provider,
     label: LabelBrush,
@@ -1975,9 +2105,9 @@ fn prepare_usage_strip(
     } else {
         Ink::Light
     };
-    let icon_size = px(16.0).max(12.0);
+    let icon_size = px(STRIP_ICON).max(STRIP_ICON_MIN);
     let icon_gap = px(5.0);
-    let item_gap = px(14.0);
+    let item_gap = px(STRIP_ITEM_GAP);
     let mut items = Vec::with_capacity(providers.len());
     for (provider, usage, _) in providers {
         let text = usage.compact_text();
@@ -2016,12 +2146,8 @@ fn draw_usage_strip(
     let px = |v: f32| (v * scale).round();
     let mut x = span.left;
     let mut anchors = Vec::with_capacity(strip.items.len());
-    let divider_color = if effective_light {
-        rgba(0, 0, 0, 32)
-    } else {
-        rgba(255, 255, 255, 36)
-    };
-    let divider_h = px(11.0).max(1.0);
+    let divider_color = strip_divider_color(effective_light);
+    let divider_h = px(STRIP_DIVIDER_HEIGHT).max(1.0);
     for (index, item) in strip.items.iter().enumerate() {
         let right = x + item.width;
         if right > span.right + 0.5 {

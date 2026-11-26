@@ -136,6 +136,10 @@ pub struct Config {
     /// name (`clock`, `battery`, `network`...) and other apps' tray icons as
     /// `tray:<program>:<id>`. Settings lists them to show them again.
     pub menu_bar_hidden_items: Vec<String>,
+    /// The shelf: files, folders, programs and shortcuts the user keeps in
+    /// the menu bar right of the dock, in order, drawn as icons the size of
+    /// the AI tools'. A program that also has a tray icon shows only here.
+    pub menu_bar_shelf: Vec<String>,
     /// Opt-in peripheral monitoring. Off means no accessory reader or queries.
     pub accessory_battery: bool,
     /// The dot under apps that have windows open.
@@ -438,6 +442,13 @@ impl Config {
             .map(|item| item.trim().to_owned())
             .filter(|item| !item.is_empty() && seen.insert(item.clone()))
             .collect();
+        let mut seen_shelf = std::collections::HashSet::new();
+        self.menu_bar_shelf = self
+            .menu_bar_shelf
+            .iter()
+            .map(|item| item.trim().to_owned())
+            .filter(|item| !item.is_empty() && seen_shelf.insert(item.to_lowercase()))
+            .collect();
         self.ai_usage_interval_minutes = self
             .ai_usage_interval_minutes
             .clamp(AI_USAGE_INTERVAL_RANGE.0, AI_USAGE_INTERVAL_RANGE.1);
@@ -499,6 +510,7 @@ impl Default for Config {
             menu_bar_notifications: false,
             menu_bar_system_monitor: false,
             menu_bar_hidden_items: Vec::new(),
+            menu_bar_shelf: Vec::new(),
             menu_bar_clock_target: None,
             accessory_battery: false,
             show_indicators: true,
@@ -1173,6 +1185,24 @@ mod tests {
             chosen.sanitized().menu_bar_hidden_items,
             ["battery", "tray:discord.exe:1"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_shelf_is_empty_unless_chosen_and_repeats_are_dropped() -> Result<(), serde_json::Error> {
+        let older: Config = serde_json::from_str("{}")?;
+        assert!(older.menu_bar_shelf.is_empty());
+        let chosen: Config = serde_json::from_str(
+            r#"{"menuBarShelf":["C:\\Tools\\a.exe"," ","c:\\tools\\A.EXE","D:\\Notes"]}"#,
+        )?;
+        let shelf = chosen.sanitized().menu_bar_shelf;
+        assert_eq!(shelf, [r"C:\Tools\a.exe", r"D:\Notes"]);
+        let saved = serde_json::to_string(&Config {
+            menu_bar_shelf: shelf.clone(),
+            ..Config::default()
+        })?;
+        let back: Config = serde_json::from_str(&saved)?;
+        assert_eq!(back.menu_bar_shelf, shelf);
         Ok(())
     }
 

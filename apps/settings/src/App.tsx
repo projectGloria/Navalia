@@ -31,6 +31,7 @@ import {
   openReleaseNotes,
   openRepository,
   pickClockTarget,
+  pickShelfItem,
   pickFolder,
   saveConfig,
   setAutostart,
@@ -276,6 +277,22 @@ export function App() {
     pickClockTarget(config.menuBarClockTarget ?? null, t.clockTargetApps, t.clockTargetAllFiles)
       .then((target) => target && update({ menuBarClockTarget: target }))
       .catch(() => setFailed(true));
+  };
+  const shelf = config.menuBarShelf ?? [];
+  const addToShelf = (folder: boolean) => {
+    pickShelfItem(folder, t.clockTargetApps, t.clockTargetAllFiles)
+      .then((path) => {
+        if (path && !shelf.some((item) => item.toLowerCase() === path.toLowerCase())) {
+          update({ menuBarShelf: [...shelf, path] });
+        }
+      })
+      .catch(() => setFailed(true));
+  };
+  const moveShelfItem = (index: number, by: number) => {
+    const next = [...shelf];
+    const [item] = next.splice(index, 1);
+    next.splice(index + by, 0, item);
+    update({ menuBarShelf: next });
   };
   const ownMenuBarTheme = config.menuBarAppearance != null;
   const autoHideOn = config.autoHide || (config.smartHide ?? false);
@@ -735,6 +752,49 @@ export function App() {
                     </button>
                   </SubRow>
                 ))}
+                <SubRow label={t.shelf} hint={shelf.length > 0 ? t.shelfHint : t.shelfEmpty} open={config.menuBar}>
+                  <div className="push-group">
+                    <button type="button" className="push" onClick={() => addToShelf(false)}>
+                      {t.shelfAddFile}
+                    </button>
+                    <button type="button" className="push" onClick={() => addToShelf(true)}>
+                      {t.shelfAddFolder}
+                    </button>
+                  </div>
+                </SubRow>
+                {shelf.map((path, index) => (
+                  <SubRow key={path} label={shelfItemName(path)} hint={path} open={config.menuBar}>
+                    <div className="push-group">
+                      <button
+                        type="button"
+                        className="push"
+                        aria-label={t.shelfMoveLeft}
+                        title={t.shelfMoveLeft}
+                        disabled={index === 0}
+                        onClick={() => moveShelfItem(index, -1)}
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        className="push"
+                        aria-label={t.shelfMoveRight}
+                        title={t.shelfMoveRight}
+                        disabled={index === shelf.length - 1}
+                        onClick={() => moveShelfItem(index, 1)}
+                      >
+                        ›
+                      </button>
+                      <button
+                        type="button"
+                        className="push"
+                        onClick={() => update({ menuBarShelf: shelf.filter((item) => item !== path) })}
+                      >
+                        {t.shelfRemove}
+                      </button>
+                    </div>
+                  </SubRow>
+                ))}
                 <SubRow label={t.clockTarget} hint={config.menuBarClockTarget ?? t.clockTargetDefault} open={config.menuBar}>
                   <div className="push-group">
                     {config.menuBarClockTarget ? (
@@ -888,6 +948,12 @@ export function App() {
 }
 
 /** A hidden menu bar icon's name: its built-in label, or the app that owns the tray icon. */
+/** A shelf entry as Explorer names it: the last part of its path, without `.lnk`/`.exe`. */
+function shelfItemName(path: string): string {
+  const name = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
+  return name.replace(/\.(lnk|exe)$/i, "");
+}
+
 function hiddenIconName(t: Texts, key: string): string {
   const names: Record<string, string> = t.menuBarIconNames;
   if (Object.hasOwn(names, key)) return names[key];

@@ -292,10 +292,18 @@ impl MenuBar {
             tray_items: self
                 .tray_items
                 .iter()
-                .filter(|item| !self.is_hidden(&item.preference_key()))
+                .filter(|item| {
+                    !self.is_hidden(&item.preference_key()) && !shelf_claims(&self.shelf, item)
+                })
                 .cloned()
                 .collect(),
             hidden: self.hidden.clone(),
+            shelf: self.shelf.clone(),
+            shelf_tray: self
+                .shelf
+                .iter()
+                .map(|item| self.shelf_tray_icon(item.program.as_deref()).cloned())
+                .collect(),
         };
         self.apply_look(gfx, look)
     }

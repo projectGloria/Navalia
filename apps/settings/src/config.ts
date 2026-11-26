@@ -55,6 +55,8 @@ export interface Config {
   menuBarSystemMonitor?: boolean;
   /** Menu bar icons the user hid by right-clicking them: built-in names or `tray:<program>:<id>`. */
   menuBarHiddenItems?: string[];
+  /** Files, folders and apps on the menu bar shelf, in order. */
+  menuBarShelf?: string[];
   showIndicators: boolean;
   showRecents: boolean;
   bounceOnOpen: boolean;
@@ -97,6 +99,8 @@ export const pickFolder = (current: string | null) =>
 /** An app or shortcut for the clock to open, or null if the user cancels. */
 export const pickClockTarget = (current: string | null, apps: string, all: string) =>
   invoke<string | null>("pick_clock_target", { current, apps, all });
+export const pickShelfItem = (folder: boolean, apps: string, all: string) =>
+  invoke<string | null>("pick_shelf_item", { folder, apps, all });
 export interface UpdateInfo {
   version: string;
   /** Release page with the notes, if the manifest has one. */

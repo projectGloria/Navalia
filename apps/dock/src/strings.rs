@@ -58,6 +58,7 @@ pub struct Strings {
     pub remove_from_dock: &'static str,
     /// A menu bar icon's right-click menu: hide that icon.
     pub hide_from_menu_bar: &'static str,
+    pub remove_from_shelf: &'static str,
     /// A tray icon's right-click menu: the app's own menu.
     pub app_menu: &'static str,
     pub shell_operation_failed: &'static str,

@@ -364,6 +364,14 @@ pub fn shortcut_id(link: &Path) -> Option<String> {
     })
 }
 
+/// The file a shortcut opens, when it opens one.
+///
+/// Requires COM to be initialized on the calling thread.
+#[must_use]
+pub fn shortcut_target(link: &Path) -> Option<String> {
+    read_link(link)?.0
+}
+
 /// `true` when Windows lists `app_id` as an app of its own rather than as a
 /// shortcut to `program`, the program that runs it: a web app inside a
 /// browser. The browser's own identity (`MSEdge`, `Chrome`) is a shortcut to

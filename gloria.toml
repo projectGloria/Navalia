@@ -1,6 +1,6 @@
 id = "Navalia"
 name = "Navalia"
-version = "0.1.25"
+version = "0.2.0"
 main_exe = "navalia.exe"
 icon = "assets/brand/navalia.ico"
 accent = "#38bdf8"
