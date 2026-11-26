@@ -301,8 +301,9 @@ impl App {
         };
         let (room_x, room_top) = (room + side_growth, rise + label_room);
         let mut window_zone = zone(room_x, room_top, room_x, room);
-        let docked_bottom =
-            !self.config.hides_automatically() && edge == DockEdge::Bottom && !self.fullscreen;
+        // Full-screen mode hides the bar and dock without rebuilding the
+        // stage, so the backdrop must not depend on it or it stays stale.
+        let docked_bottom = !self.config.hides_automatically() && edge == DockEdge::Bottom;
         let backdrop = if docked_bottom {
             crate::menubar::TaskbarBackdrop {
                 style: self.config.taskbar_style,
@@ -439,7 +440,11 @@ impl App {
         self.target.SetRoot(&scene.root)?;
 
         let (enter, leave) = (px(ENTER_HALO), px(LEAVE_HALO));
-        let dock_cutout = (edge == DockEdge::Bottom && !self.fullscreen).then(|| {
+        // The bottom bar lives on the primary monitor only; an auto-hiding
+        // dock on another screen must not carve its position into it.
+        let on_bar_screen =
+            primary_monitor().is_some_and(|primary| primary.screen == monitor.screen);
+        let dock_cutout = (edge == DockEdge::Bottom && on_bar_screen).then(|| {
             let pad = px(8.0);
             (
                 (dock_x - side_growth - pad).floor() as i32,

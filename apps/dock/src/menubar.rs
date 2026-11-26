@@ -24,12 +24,13 @@ use navalia_shell::{
     launcher,
     status::{self, AudioWatch, Network, NetworkWatch, Privacy, TaskbarButtons, Volume},
     system::{self, Battery},
+    tray::{self, IconKey, TrayClick, TrayHost, TrayIcon},
     watch::RegistryWatch,
 };
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering},
     },
     time::{Duration, Instant},
@@ -53,7 +54,8 @@ use windows::{
             WinRT::Composition::ICompositorDesktopInterop,
         },
         UI::Input::KeyboardAndMouse::{
-            GetCapture, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+            GetCapture, GetDoubleClickTime, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT,
+            TrackMouseEvent,
         },
         UI::WindowsAndMessaging::{
             CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HHOOK,
@@ -62,7 +64,7 @@ use windows::{
             SWP_SHOWWINDOW, SetCursor, SetTimer, SetWindowPos, SetWindowsHookExW,
             UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_CAPTURECHANGED, WM_LBUTTONDOWN,
             WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
-            WM_RBUTTONDOWN, WM_SETCURSOR, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER,
+            WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER,
             WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
             WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
@@ -113,8 +115,6 @@ const MONITOR_COLUMN_GAP: f32 = 8.0;
 /// The network lost this long is worth a word from the mascot; shorter
 /// drops (Wi-Fi roaming, a router restarting) say nothing.
 const NETWORK_TIMER: usize = 7;
-const TRAY_TIMER: usize = 8;
-const TRAY_POLL_MS: u32 = 3_000;
 const OFFLINE_GRACE: Duration = Duration::from_secs(8);
 const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
@@ -285,7 +285,7 @@ struct Look {
     panel: Option<Island>,
     usage_refreshing: bool,
     track: Option<Track>,
-    tray_items: Vec<navalia_shell::tray::TrayItem>,
+    tray_items: Vec<TrayIcon>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -605,10 +605,13 @@ pub struct MenuBar {
     /// Energy saver on or off arrives as `WM_POWERBROADCAST`; glass follows.
     _saver_watch: navalia_shell::power::SaverWatch,
     audio: Option<AudioWatch>,
-    tray_items: Vec<navalia_shell::tray::TrayItem>,
-    tray_pending: Arc<Mutex<Option<Vec<navalia_shell::tray::TrayItem>>>>,
-    tray_in_flight: Arc<AtomicBool>,
-    tray_icons: HashMap<String, Option<CompositionSurfaceBrush>>,
+    /// Other apps' notification-area icons, received while the bar lives.
+    tray_host: Option<TrayHost>,
+    tray_items: Vec<TrayIcon>,
+    /// Drawn pictures by icon id, with the picture's serial.
+    tray_icons: HashMap<String, (u64, Option<CompositionSurfaceBrush>)>,
+    /// The last tray click, to tell a double click.
+    tray_last_click: Option<(IconKey, Instant)>,
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -622,6 +625,13 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
             let y = (l.0 >> 16) as i16;
             if !app::menu_bar_volume_release(Some(f32::from(y))) {
                 app::menu_bar_clicked(f32::from(x), f32::from(y));
+            }
+        }
+        WM_RBUTTONUP => {
+            let x = (l.0 & 0xFFFF) as i16;
+            let y = (l.0 >> 16) as i16;
+            if !app::menu_bar_right_clicked(f32::from(x), f32::from(y)) {
+                return unsafe { DefWindowProcW(hwnd, msg, w, l) };
             }
         }
         WM_MOUSEMOVE => {
@@ -645,7 +655,6 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         WM_TIMER if w.0 == VOLUME_TIMER => app::menu_bar_volume_flush(),
         WM_TIMER if w.0 == PROGRESS_TIMER => app::menu_bar_progress_tick(),
         WM_TIMER if w.0 == MONITOR_TIMER => app::menu_bar_monitor_tick(),
-        WM_TIMER if w.0 == TRAY_TIMER => app::menu_bar_tray_tick(),
         WM_CAPTURECHANGED => {
             // Avoid reentering the app borrow inside Set/ReleaseCapture.
             unsafe {
@@ -1299,70 +1308,56 @@ impl MenuBar {
             search_watch: status::watch_search_settings(hwnd.0 as isize, REGISTRY_CHANGED),
             _saver_watch: navalia_shell::power::SaverWatch::new(hwnd.0 as isize),
             audio: AudioWatch::new(hwnd.0 as isize, AUDIO_CHANGED),
+            tray_host: TrayHost::start(hwnd.0 as isize, TRAY_ICONS_CHANGED),
             tray_items: Vec::new(),
-            tray_pending: Arc::new(Mutex::new(None)),
-            tray_in_flight: Arc::new(AtomicBool::new(false)),
             tray_icons: HashMap::new(),
+            tray_last_click: None,
         };
         AUDIO_TICK_PENDING.store(false, Ordering::Relaxed);
         bar.update_status();
         bar.refresh(gfx)?;
         bar.schedule_next_minute();
-        bar.poll_tray_icons();
-        // SAFETY: Timer belongs to this UI window; destroyed with the HWND.
-        unsafe {
-            SetTimer(Some(bar.hwnd), TRAY_TIMER, TRAY_POLL_MS, None);
-        }
         Ok(bar)
     }
 
-    fn poll_tray_icons(&self) {
-        if self.tray_in_flight.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let hwnd = self.hwnd.0 as isize;
-        let pending = Arc::clone(&self.tray_pending);
-        let in_flight = Arc::clone(&self.tray_in_flight);
-        std::thread::spawn(move || {
-            let items = navalia_shell::tray::list_tray_icons();
-            if let Ok(mut slot) = pending.lock() {
-                *slot = Some(items);
-            }
-            in_flight.store(false, Ordering::Relaxed);
-            // SAFETY: Posts a payload-free notification to the live bar HWND.
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(hwnd as *mut _)),
-                    TRAY_ICONS_CHANGED,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
-        });
-    }
-
-    pub fn tray_tick(&mut self) {
-        if self.visible {
-            self.poll_tray_icons();
-        }
-    }
-
     pub fn tray_changed(&mut self, gfx: &Gfx) -> Result<()> {
-        let items = self
-            .tray_pending
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take());
-        let Some(items) = items else {
+        let Some(host) = &self.tray_host else {
             return Ok(());
         };
+        let items: Vec<TrayIcon> = host.icons().into_iter().filter(TrayIcon::shown).collect();
         if self.tray_items == items {
             return Ok(());
         }
         self.tray_icons
-            .retain(|id, _| items.iter().any(|item| item.id == *id));
+            .retain(|id, _| items.iter().any(|item| item.id() == *id));
         self.tray_items = items;
         self.refresh(gfx)
+    }
+
+    /// The tray icon under (`x`, `y`) on the bar row, if any.
+    fn tray_item_at(&self, x: f32, y: f32) -> Option<TrayIcon> {
+        let bar_y = (self.visual_height - (self.bounds.bottom - self.bounds.top)).max(0) as f32;
+        if y < bar_y {
+            return None;
+        }
+        let (_, _, action) = self
+            .zones
+            .iter()
+            .find(|(left, right, _)| x >= *left && x < *right)?;
+        match action {
+            Action::TrayItem(idx) => self.look.as_ref()?.tray_items.get(*idx).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Opens a tray icon's menu. `false` when (`x`, `y`) is not on one.
+    pub fn right_click(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<bool> {
+        let Some(item) = self.tray_item_at(x, y) else {
+            return Ok(false);
+        };
+        self.dismiss_island(gfx)?;
+        tray::click(&item, TrayClick::Right, cursor_anchor());
+        Ok(true)
     }
 
     pub fn set_app_name(&mut self, gfx: &Gfx, name: &str) -> Result<()> {
@@ -2149,13 +2144,20 @@ impl MenuBar {
                     .and_then(|look| look.tray_items.get(idx))
                     .cloned()
                 {
-                    std::thread::spawn(move || {
-                        let _ = navalia_shell::tray::invoke_tray_icon(
-                            &item.id,
-                            &item.name,
-                            item.exe_path.as_deref(),
-                        );
+                    let now = Instant::now();
+                    // SAFETY: Reads a system setting.
+                    let window = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
+                    let double = self.tray_last_click.is_some_and(|(key, at)| {
+                        key == item.key && now.duration_since(at) <= window
                     });
+                    // A third click starts over, as with a mouse.
+                    self.tray_last_click = (!double).then_some((item.key, now));
+                    let kind = if double {
+                        TrayClick::Double
+                    } else {
+                        TrayClick::Left
+                    };
+                    tray::click(&item, kind, cursor_anchor());
                 }
             }
             None => {}
@@ -2706,20 +2708,22 @@ impl MenuBar {
         );
         for (idx, &(icon_left, icon_right)) in tray_spans.iter().enumerate() {
             let tray_item = &look.tray_items[idx];
-            let cached = if let Some(entry) = self.tray_icons.get(&tray_item.id) {
-                entry.clone()
-            } else {
-                let brush = tray_item
-                    .exe_path
-                    .as_deref()
-                    .and_then(|path| navalia_shell::icons::load_icon(path, tray_side as u32).ok())
-                    .and_then(|img| gfx.image_surface(&img).ok())
-                    .and_then(|surface| c.CreateSurfaceBrushWithSurface(&surface).ok())
-                    .inspect(|brush| {
-                        let _ = brush.SetStretch(CompositionStretch::Uniform);
-                    });
-                self.tray_icons.insert(tray_item.id.clone(), brush.clone());
-                brush
+            let id = tray_item.id();
+            let cached = match self.tray_icons.get(&id) {
+                Some((serial, brush)) if *serial == tray_item.serial => brush.clone(),
+                _ => {
+                    let brush = tray_item
+                        .image
+                        .as_deref()
+                        .and_then(|img| gfx.image_surface(img).ok())
+                        .and_then(|surface| c.CreateSurfaceBrushWithSurface(&surface).ok())
+                        .inspect(|brush| {
+                            let _ = brush.SetStretch(CompositionStretch::Uniform);
+                        });
+                    self.tray_icons
+                        .insert(id, (tray_item.serial, brush.clone()));
+                    brush
+                }
             };
             if let Some(brush) = cached {
                 let visual = c.CreateSpriteVisual()?;
@@ -6123,6 +6127,14 @@ mod island_tests {
         }
         Ok(())
     }
+}
+
+/// Where the pointer is, for a tray icon to open its menu at.
+fn cursor_anchor() -> (i32, i32) {
+    let mut point = POINT::default();
+    // SAFETY: Writes the cursor position into a local.
+    let _ = unsafe { GetCursorPos(&mut point) };
+    (point.x, point.y)
 }
 
 fn tray_item_spans(start_x: f32, max_x: f32, side: f32, gap: f32, count: usize) -> Vec<(f32, f32)> {

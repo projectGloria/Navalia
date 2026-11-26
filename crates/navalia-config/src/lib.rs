@@ -334,7 +334,8 @@ pub enum TaskbarStyle {
 pub fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
     let trimmed = value.trim();
     let hex = trimmed.strip_prefix('#')?;
-    if hex.len() != 6 || !hex.is_ascii() {
+    // `from_str_radix` accepts a leading sign, so check the digits first.
+    if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
@@ -1224,6 +1225,7 @@ mod tests {
         assert_eq!(parse_hex_color("#123"), None);
         assert_eq!(parse_hex_color("123456"), None);
         assert_eq!(parse_hex_color("#zzzzzz"), None);
+        assert_eq!(parse_hex_color("#+f+f+f"), None);
 
         let valid = Config {
             taskbar_color: Some(" #ABCDEF ".into()),

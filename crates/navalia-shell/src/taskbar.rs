@@ -16,7 +16,7 @@ use windows::{
         UI::{
             Shell::{ABM_GETSTATE, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
             WindowsAndMessaging::{
-                FindWindowExW, FindWindowW, GWL_EXSTYLE, GetLayeredWindowAttributes,
+                FindWindowExW, GWL_EXSTYLE, GetLayeredWindowAttributes, GetPropW,
                 GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
                 WS_EX_LAYERED, WS_EX_TRANSPARENT,
             },
@@ -132,7 +132,7 @@ fn taskbars() -> Vec<HWND> {
     let mut found = Vec::new();
     // SAFETY: Read-only calls with valid static strings.
     unsafe {
-        if let Ok(hwnd) = FindWindowW(PRIMARY, None) {
+        if let Some(hwnd) = explorer_tray() {
             found.push(hwnd);
         }
         let mut previous = None;
@@ -142,6 +142,22 @@ fn taskbars() -> Vec<HWND> {
         }
     }
     found
+}
+
+/// Explorer's primary taskbar window. The dock's own tray host shares its
+/// class (apps find the tray by it), so the host is skipped by its marker.
+pub fn explorer_tray() -> Option<HWND> {
+    let mut previous = None;
+    // SAFETY: Read-only lookups with valid static strings.
+    unsafe {
+        while let Ok(hwnd) = FindWindowExW(None, previous, PRIMARY, None) {
+            if GetPropW(hwnd, crate::tray::HOST_MARKER).is_invalid() {
+                return Some(hwnd);
+            }
+            previous = Some(hwnd);
+        }
+    }
+    None
 }
 
 fn appbar_data() -> APPBARDATA {

@@ -202,13 +202,16 @@ pub fn menu_bar_bluetooth_changed() {
     });
 }
 
-pub fn menu_bar_tray_tick() {
+/// A right click on the bar: `true` if it opened a tray icon's menu.
+pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
+    let mut handled = false;
     with_app("bandeja del sistema", |app| {
         if let Some(bar) = &mut app.menubar {
-            bar.tray_tick();
+            handled = bar.right_click(&app.gfx, x, y)?;
         }
         Ok(())
     });
+    handled
 }
 
 pub fn menu_bar_tray_changed() {
