@@ -211,5 +211,17 @@
     "camera": "ক্যামেরা",
     "bluetooth": "ব্লুটুথ",
     "system_monitor": "সিস্টেম মনিটর"
-  }
+  },
+  "aiTools": "AI টুলস",
+  "aiToolsShow": "AI টুলস উইজেট দেখান",
+  "aiToolsShowHint": "স্থানীয় সেশন ব্যবহার করে নির্বাচিত AI টুলের ৫ ঘণ্টার বাকি কোটা দেখায়। কোনো তথ্য সংরক্ষণ করে না।",
+  "aiUsagePosition": "বারে অবস্থান",
+  "aiUsagePositionLeft": "বাম",
+  "aiUsagePositionRight": "ডান",
+  "aiUsageInterval": "পরীক্ষার ব্যবধান",
+  "aiUsageIntervalHint": "প্রতি কয়েক মিনিটে ব্যাকগ্রাউন্ডে নীরবে চলে।",
+  "aiUsageOnlyRunning": "শুধু চালু থাকা অ্যাপ দেখান",
+  "aiUsageOnlyRunningHint": "যে টুলের ক্লায়েন্ট বা CLI খোলা নেই তা লুকিয়ে রাখুন।",
+  "aiToolsList": "টুলস",
+  "aiProviderZai": "Z.ai GLM"
 }

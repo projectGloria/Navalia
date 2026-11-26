@@ -9,7 +9,7 @@ Lightweight macOS-inspired dock and optional menu bar for Windows 10/11 (Rust Wi
 - Test (single): `cargo test -p CRATE TEST_NAME` or `node --test apps/settings/tests/FILE.test.mjs`
 - Lint / Format / Typecheck: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `pnpm --dir apps/settings build`
 - PowerShell checks: `./scripts/Test-WingetAutomation.ps1`, `./scripts/Test-CodeSigning.ps1`, `./scripts/Test-ReleaseAntivirus.ps1`
-- Build installer: `./scripts/build-installer.ps1` (stages `navalia.exe` sidecar into `apps/settings/src-tauri/binaries/` and bundles)
+- Build installer: `./scripts/build-installer.ps1` (builds Settings UI + `navalia`/`navalia-settings`, stages into `stage/`, packs `dist/Navalia_<version>_x64-setup.exe` via `gloria-setup`)
 
 ## Architecture
 - `apps/dock/src/main.rs` — Native Windows dock entry point (`--quit`, `--restore`, `--autostart`, `--guard`, `--usage-worker`, `--shell-worker`), Direct2D/DirectComposition rendering, taskbar hiding, and watchdog recovery.

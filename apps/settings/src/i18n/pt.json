@@ -211,5 +211,17 @@
     "camera": "Câmera",
     "bluetooth": "Bluetooth",
     "system_monitor": "Monitor do sistema"
-  }
+  },
+  "aiTools": "Ferramentas de IA",
+  "aiToolsShow": "Mostrar widget de ferramentas de IA",
+  "aiToolsShowHint": "Mostra a cota restante de 5 h das ferramentas escolhidas usando sessões locais. Nunca salva credenciais.",
+  "aiUsagePosition": "Posição na barra",
+  "aiUsagePositionLeft": "Esquerda",
+  "aiUsagePositionRight": "Direita",
+  "aiUsageInterval": "Intervalo de verificação",
+  "aiUsageIntervalHint": "Executa silenciosamente em segundo plano a cada poucos minutos.",
+  "aiUsageOnlyRunning": "Mostrar apenas apps em execução",
+  "aiUsageOnlyRunningHint": "Oculta ferramentas cujo aplicativo ou CLI não está aberto.",
+  "aiToolsList": "Ferramentas",
+  "aiProviderZai": "Z.ai GLM"
 }

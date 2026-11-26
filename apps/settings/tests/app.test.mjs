@@ -34,7 +34,10 @@ const base = {
   showTrash: true, pinExplorer: true,
   showDownloads: true,
   showOtherWorkspaces: false,
-  menuBarIslandStyle: "notch", checkUpdates: false, appearance: "auto",
+  menuBarIslandStyle: "notch", aiUsage: true, aiUsagePosition: "right",
+  aiUsageIntervalMinutes: 5, aiUsageOnlyRunning: false,
+  aiUsageProviders: ["claude", "codex", "antigravity"],
+  checkUpdates: false, appearance: "auto",
   pinned: [], recent: [], shortcutsFolder: null,
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -128,7 +131,7 @@ function fixture(section = "menubar", config = {}, save = async () => {}, galler
 }
 
 test("each section renders only its own controls, in every language and visibility state", () => {
-  const markers = { appearance: "themeHint", dock: "size", windows: "genie", menubar: "menuBarShow", system: "autostart" };
+  const markers = { appearance: "themeHint", dock: "size", windows: "genie", menubar: "menuBarShow", ai: "aiToolsShow", system: "autostart" };
   for (const language of Object.keys(texts)) for (const menuBar of [true, false]) {
     for (const section of Object.keys(markers)) {
       const view = fixture(section, { language, menuBar });
@@ -230,7 +233,7 @@ test("retired Windows status-item overrides expose no controls and create no sav
     try {
       const controls = [...elements(view.body())].filter((node) => "checked" in node.props);
       assert.deepEqual(controls.map((node) => node.props.label), [texts[language].menuBarShow,
-        texts[language].menuBarMusic, texts[language].aiUsage,
+        texts[language].menuBarMusic,
         texts[language].accessoryBattery, texts[language].menuBarSystemMonitor,
         texts[language].menuBarNotifications]);
       view.fire(60);
@@ -474,11 +477,11 @@ test("a queued newer choice wins over an earlier failed write", async () => {
     view.fire(60);
     await settle();
     view.change(texts.en.menuBarMusic, true);
-    view.change(texts.en.aiUsage, false);
+    view.change(texts.en.accessoryBattery, true);
     view.fire(60);
     rejectFirst(new Error("disk busy"));
     await settle();
-    assert.deepEqual(view.calls, [{ menuBarMusic: false }, { menuBarMusic: true, aiUsage: false }]);
+    assert.deepEqual(view.calls, [{ menuBarMusic: false }, { menuBarMusic: true, accessoryBattery: true }]);
     assert.equal(await view.close(), false);
     assert.equal(view.calls.length, 2, "the obsolete value must not be replayed on close");
   } finally { unmount(); }
@@ -696,4 +699,27 @@ test("language uses one dropdown and changing it preserves other preferences", a
       view.fire(60); await settle();
     }
   }
+});
+
+test("ai tools section configures position, interval, running filter, and individual providers", async () => {
+  const view = fixture("ai");
+  view.change(texts.en.aiUsagePosition, "left");
+  view.fire(60); await settle();
+  assert.deepEqual(view.calls.at(-1), { aiUsagePosition: "left" });
+
+  view.change(texts.en.aiUsageInterval, 15);
+  view.fire(60); await settle();
+  assert.deepEqual(view.calls.at(-1), { aiUsageIntervalMinutes: 15 });
+
+  view.change(texts.en.aiUsageOnlyRunning, true);
+  view.fire(60); await settle();
+  assert.deepEqual(view.calls.at(-1), { aiUsageOnlyRunning: true });
+
+  view.change("Gemini", true);
+  view.fire(60); await settle();
+  assert.deepEqual(view.calls.at(-1), { aiUsageProviders: ["claude", "codex", "antigravity", "gemini"] });
+
+  view.change("Codex", false);
+  view.fire(60); await settle();
+  assert.deepEqual(view.calls.at(-1), { aiUsageProviders: ["claude", "antigravity", "gemini"] });
 });

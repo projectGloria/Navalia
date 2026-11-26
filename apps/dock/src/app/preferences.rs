@@ -16,7 +16,7 @@ use navalia_shell::{
 
 use crate::{
     assets::fallback_name,
-    menubar::{MenuBar, MenuBarWidgets},
+    menubar::{AiUsageSettings, MenuBar, MenuBarWidgets},
     strings,
 };
 
@@ -364,10 +364,18 @@ impl App {
         }
         if let Some(bar) = &mut self.menubar {
             bar.set_clock_target(self.config.menu_bar_clock_target.as_deref());
+            let usage_settings = AiUsageSettings {
+                position: self.config.ai_usage_position,
+                interval_minutes: self.config.ai_usage_interval_minutes,
+                only_running: self.config.ai_usage_only_running,
+                providers: self.config.ai_usage_providers.clone(),
+            };
             let applied = bar
                 .set_auto_hide(self.config.menu_bar_auto_hide)
                 .and_then(|()| bar.set_smart_hide(self.config.menu_bar_smart_hide))
-                .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
+                .and_then(|()| {
+                    bar.set_usage_settings(&self.gfx, self.config.ai_usage, usage_settings)
+                })
                 .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
                 .and_then(|()| bar.set_hidden_items(&self.gfx, &self.config.menu_bar_hidden_items))

@@ -238,6 +238,10 @@ const WELCOME_TRIES: u8 = 10;
 /// The break reminder's minute, only while it is on.
 const BREAK_TIMER: usize = 18;
 const BREAK_CHECK_MS: u32 = 60_000;
+/// Explorer's hidden taskbar slid into view (a shell flyout opened): put the
+/// dock and menu bar back on top once its slide settles.
+const RAISE_TIMER: usize = 19;
+const RAISE_DELAY_MS: u32 = 16;
 const DRAG_POLL_MS: u32 = 16;
 
 /// Screen-edge strip that reveals a hidden dock, in physical pixels.

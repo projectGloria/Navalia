@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type AiProvider,
+  type AiUsagePosition,
   type Appearance,
   type Config,
   type DockPosition,
@@ -15,6 +17,7 @@ import {
   type Language,
   type UpdateInfo,
   type WindowsPreferences,
+  AI_USAGE_INTERVAL,
   ICON_SIZE,
   MAX_MAGNIFIED_SIZE,
   checkUpdate,
@@ -675,17 +678,10 @@ export function App() {
                     onChange={(menuBarMusic) => update({ menuBarMusic })}
                   />
                 </SubRow>
-                <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
-                  <Toggle
-                    label={t.aiUsage}
-                    checked={config.aiUsage}
-                    onChange={(aiUsage) => update({ aiUsage })}
-                  />
-                </SubRow>
                 <SubRow
                   label={t.islandStyle}
                   stacked
-                  open={config.menuBar && (config.menuBarMusic || config.aiUsage)}
+                  open={config.menuBar && config.menuBarMusic}
                 >
                   <VisualChoices<IslandStyle>
                     label={t.islandStyle}
@@ -752,6 +748,70 @@ export function App() {
                   </div>
                 </SubRow>
               </Card>
+            </>
+          ) : section === "ai" ? (
+            <>
+              <Card>
+                <Row label={t.aiToolsShow} hint={t.aiToolsShowHint}>
+                  <Toggle
+                    label={t.aiToolsShow}
+                    checked={config.aiUsage}
+                    onChange={(aiUsage) => update({ aiUsage })}
+                  />
+                </Row>
+                <SubRow label={t.aiUsagePosition} open={config.aiUsage}>
+                  <Segmented<AiUsagePosition>
+                    label={t.aiUsagePosition}
+                    value={config.aiUsagePosition ?? "right"}
+                    options={[
+                      { value: "left", label: t.aiUsagePositionLeft },
+                      { value: "right", label: t.aiUsagePositionRight },
+                    ]}
+                    onChange={(aiUsagePosition) => update({ aiUsagePosition })}
+                  />
+                </SubRow>
+                <SubRow label={t.aiUsageInterval} hint={t.aiUsageIntervalHint} open={config.aiUsage}>
+                  <Slider
+                    label={t.aiUsageInterval}
+                    value={config.aiUsageIntervalMinutes ?? 5}
+                    min={AI_USAGE_INTERVAL.min}
+                    max={AI_USAGE_INTERVAL.max}
+                    unit="min"
+                    onChange={(aiUsageIntervalMinutes) => update({ aiUsageIntervalMinutes })}
+                  />
+                </SubRow>
+                <SubRow label={t.aiUsageOnlyRunning} hint={t.aiUsageOnlyRunningHint} open={config.aiUsage}>
+                  <Toggle
+                    label={t.aiUsageOnlyRunning}
+                    checked={config.aiUsageOnlyRunning ?? false}
+                    onChange={(aiUsageOnlyRunning) => update({ aiUsageOnlyRunning })}
+                  />
+                </SubRow>
+              </Card>
+              {config.aiUsage ? (
+                <Card title={t.aiToolsList}>
+                  {AI_PROVIDERS.map((provider) => {
+                    const enabled = new Set(config.aiUsageProviders ?? DEFAULT_AI_PROVIDERS);
+                    const checked = enabled.has(provider);
+                    const name = aiProviderName(t, provider);
+                    return (
+                      <Row key={provider} icon={<AiProviderBadge provider={provider} />} label={name}>
+                        <Toggle
+                          label={name}
+                          checked={checked}
+                          onChange={(on) => {
+                            if (on) enabled.add(provider);
+                            else enabled.delete(provider);
+                            update({
+                              aiUsageProviders: AI_PROVIDERS.filter((item) => enabled.has(item)),
+                            });
+                          }}
+                        />
+                      </Row>
+                    );
+                  })}
+                </Card>
+              ) : null}
             </>
           ) : (
             <>
@@ -855,7 +915,55 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "system"];
+const SECTIONS: readonly SectionId[] = ["appearance", "dock", "windows", "menubar", "ai", "system"];
+const AI_PROVIDERS: readonly AiProvider[] = ["claude", "codex", "antigravity", "gemini", "opencode", "zai"];
+const DEFAULT_AI_PROVIDERS: readonly AiProvider[] = ["claude", "codex", "antigravity"];
+
+function aiProviderName(t: Texts, provider: AiProvider): string {
+  switch (provider) {
+    case "claude": return "Claude";
+    case "codex": return "Codex";
+    case "antigravity": return "Antigravity";
+    case "gemini": return "Gemini";
+    case "opencode": return "OpenCode Go";
+    case "zai": return t.aiProviderZai;
+  }
+}
+
+function AiProviderBadge({ provider }: { provider: AiProvider }) {
+  const bg: Record<AiProvider, string> = {
+    claude: "#d97757",
+    codex: "#38bdf8",
+    antigravity: "#6366f1",
+    gemini: "#6f92ff",
+    opencode: "#4aa67e",
+    zai: "#4f6ef7",
+  };
+  const glyph: Record<AiProvider, string> = {
+    claude: "C",
+    codex: "X",
+    antigravity: "A",
+    gemini: "G",
+    opencode: "O",
+    zai: "Z",
+  };
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <rect width="24" height="24" rx="6" fill={bg[provider]} />
+      <text
+        x="12"
+        y="16"
+        textAnchor="middle"
+        fill="#ffffff"
+        fontSize="12"
+        fontWeight="700"
+        fontFamily="system-ui, sans-serif"
+      >
+        {glyph[provider]}
+      </text>
+    </svg>
+  );
+}
 
 const TASKBAR_SWATCHES: readonly string[] = [
   "#18181b",
@@ -901,6 +1009,8 @@ function sectionTitle(t: Texts, section: SectionId): string {
       return t.windows;
     case "menubar":
       return t.menuBar;
+    case "ai":
+      return t.aiTools;
     case "system":
       return t.system;
   }

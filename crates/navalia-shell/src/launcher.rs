@@ -232,6 +232,74 @@ pub fn open_quick_settings() {
     }
     if !crate::system::is_windows_11() || open(QUICK_SETTINGS_URI).is_err() {
         tap(&[VK_LWIN, VK_A]);
+        return;
+    }
+    focus_quick_settings_when_shown();
+}
+
+/// How long quick settings may take to appear after its URI is opened.
+const QUICK_SETTINGS_SHOW_WAIT: Duration = Duration::from_millis(1500);
+
+/// Gives quick settings the focus once it is on screen. Opened through its
+/// URI from the menu bar, it can appear while another window keeps the
+/// focus; it then never loses the focus either, which is what closes it, so
+/// a click outside left it open.
+fn focus_quick_settings_when_shown() {
+    let asked = Instant::now();
+    std::thread::spawn(move || {
+        while asked.elapsed() < QUICK_SETTINGS_SHOW_WAIT {
+            // SAFETY: Window lookups and one focus request, which fails
+            // without effect if the window is gone.
+            unsafe {
+                if let Ok(panel) = FindWindowW(QUICK_SETTINGS_CLASS, None)
+                    && IsWindowVisible(panel).as_bool()
+                {
+                    if GetForegroundWindow() != panel {
+                        bring_to_front(panel);
+                    }
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    });
+}
+
+/// Closes the shell flyouts Navalia opens (quick settings, the notification
+/// center, the hidden icons) when the menu bar or the dock is clicked
+/// elsewhere. Those windows never take the focus, so the click does not
+/// reach Windows as a click outside the flyout.
+pub fn dismiss_flyouts() {
+    if quick_settings_open() {
+        tap(&[VK_LWIN, VK_A]);
+    }
+    if notifications_open() {
+        tap(&[VK_LWIN, VK_N]);
+    }
+    if open_overflow().is_some() {
+        // UI Automation waits on Explorer, so it runs on its own thread.
+        std::thread::spawn(|| {
+            if !crate::chevron::press()
+                && let Some(flyout) = open_overflow()
+            {
+                close_overflow(flyout);
+            }
+        });
+    }
+}
+
+/// Closes the hidden-icons flyout as Escape does, where its button cannot
+/// be pressed (see `toggle_hidden_icons`).
+fn close_overflow(flyout: HWND) {
+    // SAFETY: Focuses the flyout so that Escape reaches it and not the
+    // app the user was working in.
+    unsafe {
+        if GetForegroundWindow() != flyout {
+            bring_to_front(flyout);
+        }
+        if GetForegroundWindow() == flyout {
+            tap(&[VK_ESCAPE]);
+        }
     }
 }
 
@@ -352,68 +420,96 @@ const OVERFLOW_CLASSES: [PCWSTR; 2] = [
     w!("NotifyIconOverflowWindow"),
 ];
 
-/// The notification area's hidden icons, the taskbar's "^" button: Win+B
-/// moves the focus to that button and Space opens it. Not Enter: the button
-/// opens on Enter's key-down, the flyout then puts the focus on its first
-/// icon, and Enter's key-up started that app (issue #52). Space opens it on
-/// its key-up, once the key is over. The taskbar itself
-/// stays invisible while Navalia runs; only its flyout shows. Windows offers
-/// no other way: the button is not exposed while the taskbar is hidden.
+/// The notification area's hidden icons, the taskbar's "^" button, opened or
+/// closed by pressing that button through UI Automation, as a click on it
+/// would. The taskbar itself stays invisible while Navalia runs; only its
+/// flyout shows.
+///
+/// No key is sent. The flyout remembers how it was last used: opened or
+/// closed from the keyboard even once, it draws a keyboard focus box on an
+/// icon every time it opens. Where the button cannot be pressed (Windows 10),
+/// the keyboard remains the fallback (see `open_with_keyboard`).
 ///
 /// Windows opens the flyout at the bottom of the screen, above where the
 /// taskbar would be, so it is then moved under the arrow that opened it:
 /// `anchor` is the arrow's centre and the bottom of the menu bar.
-///
-/// A second click closes it, as with the taskbar's own button. Win+B with the
-/// flyout open would instead move the focus, and the pointer, to its first
-/// icon.
 pub fn toggle_hidden_icons(anchor: (i32, i32)) {
     let was_open = OVERFLOW_OPEN_AT_PRESS.swap(false, Ordering::Relaxed);
-    if let Some(flyout) = open_overflow() {
-        // SAFETY: Focuses the flyout so that Escape reaches it and not the
-        // app the user was working in.
-        unsafe {
-            if GetForegroundWindow() != flyout {
-                bring_to_front(flyout);
-            }
-            if GetForegroundWindow() == flyout {
-                tap(&[VK_ESCAPE]);
-            }
-        }
-        return;
-    }
-    if was_open {
+    let open_now = open_overflow().is_some();
+    if !open_now && was_open {
         // The press itself already dismissed it.
         return;
     }
-    // Win+B gives the hidden taskbar the focus on purpose: the dock must
-    // leave it there until Enter has opened the flyout.
-    OPENING_HIDDEN_ICONS.store(true, Ordering::Relaxed);
-    tap(&[VK_LWIN, VK_B]);
-    let pressed = Instant::now();
-    // The rest waits on its own short-lived thread so the dock never sleeps.
+    if !open_now {
+        OPENING_HIDDEN_ICONS.store(true, Ordering::Relaxed);
+    }
+    // Explorer gives the flyout the focus, which it must have or it closes
+    // at once; the dock may pass that right on because the user just clicked.
+    // SAFETY: Only widens who may take the focus, for this one input.
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+    }
+    // UI Automation waits on Explorer, so it runs on a short-lived thread.
     std::thread::spawn(move || {
-        // Space goes only to the taskbar: in any other window it would press
-        // whatever has the focus there.
-        // SAFETY: Read-only lookup of the foreground window.
-        while !crate::taskbar::is_taskbar(unsafe { GetForegroundWindow() }) {
-            if pressed.elapsed() >= HIDDEN_ICONS_FOCUS_WAIT {
-                OPENING_HIDDEN_ICONS.store(false, Ordering::Relaxed);
-                return;
+        if open_now {
+            if !crate::chevron::press()
+                && let Some(flyout) = open_overflow()
+            {
+                close_overflow(flyout);
             }
-            std::thread::sleep(Duration::from_millis(10));
+            return;
         }
-        std::thread::sleep(HIDDEN_ICONS_DELAY.saturating_sub(pressed.elapsed()));
-        tap(&[VK_SPACE]);
-        let until = Instant::now() + HIDDEN_ICONS_HOLD;
-        while Instant::now() < until {
-            if let Some(flyout) = open_overflow() {
-                keep_above(flyout, anchor);
-            }
-            std::thread::sleep(Duration::from_millis(10));
+        if crate::chevron::press() {
+            hold_under_arrow(anchor);
+        } else {
+            open_with_keyboard(anchor);
         }
         OPENING_HIDDEN_ICONS.store(false, Ordering::Relaxed);
     });
+}
+
+/// Keeps the opening flyout under the arrow, and gives it the focus if
+/// Explorer could not: without it the flyout closes again by itself.
+fn hold_under_arrow(anchor: (i32, i32)) {
+    let until = Instant::now() + HIDDEN_ICONS_HOLD;
+    let mut focused = false;
+    while Instant::now() < until {
+        if let Some(flyout) = open_overflow() {
+            // SAFETY: A read-only lookup and one focus request on a live
+            // window; the request fails without effect if Windows refuses it.
+            unsafe {
+                if !focused && GetForegroundWindow() != flyout {
+                    bring_to_front(flyout);
+                }
+            }
+            focused = true;
+            keep_above(flyout, anchor);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The fallback where the button cannot be pressed: Win+B moves the focus to
+/// it and Space opens it. Not Enter: the button opens on Enter's key-down,
+/// the flyout then puts the focus on its first icon, and Enter's key-up
+/// started that app (issue #52). Space opens it on its key-up.
+fn open_with_keyboard(anchor: (i32, i32)) {
+    // Win+B gives the hidden taskbar the focus on purpose: the dock must
+    // leave it there until Space has opened the flyout.
+    tap(&[VK_LWIN, VK_B]);
+    let pressed = Instant::now();
+    // Space goes only to the taskbar: in any other window it would press
+    // whatever has the focus there.
+    // SAFETY: Read-only lookup of the foreground window.
+    while !crate::taskbar::is_taskbar(unsafe { GetForegroundWindow() }) {
+        if pressed.elapsed() >= HIDDEN_ICONS_FOCUS_WAIT {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(HIDDEN_ICONS_DELAY.saturating_sub(pressed.elapsed()));
+    tap(&[VK_SPACE]);
+    hold_under_arrow(anchor);
 }
 
 /// From Win+B until the hidden-icons flyout has had time to open.
@@ -475,15 +571,15 @@ fn open_overflow() -> Option<HWND> {
 }
 
 /// Moves `flyout` (keeping its size) so it hangs centred under `anchor`,
-/// inside the primary monitor. Does nothing once it is there.
-fn keep_above(flyout: HWND, (center, anchor_top): (i32, i32)) {
+/// inside the primary monitor. Returns whether it is already there.
+fn keep_above(flyout: HWND, (center, anchor_top): (i32, i32)) -> bool {
     let Some(monitor) = crate::system::primary_monitor() else {
-        return;
+        return false;
     };
     let mut rect = RECT::default();
     // SAFETY: `rect` is a valid out parameter.
     if unsafe { GetWindowRect(flyout, &mut rect) }.is_err() {
-        return;
+        return false;
     }
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
@@ -494,7 +590,7 @@ fn keep_above(flyout: HWND, (center, anchor_top): (i32, i32)) {
     );
     let top = (anchor_top - height - HIDDEN_ICONS_GAP).max(screen.top + HIDDEN_ICONS_GAP);
     if (rect.left, rect.top) == (left, top) {
-        return;
+        return true;
     }
     // SAFETY: Moves a window of the same user session; its size and
     // z-order stay as Windows set them.
@@ -509,6 +605,7 @@ fn keep_above(flyout: HWND, (center, anchor_top): (i32, i32)) {
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
         );
     }
+    false
 }
 
 pub fn reveal(path: &str) -> Result<(), LaunchError> {

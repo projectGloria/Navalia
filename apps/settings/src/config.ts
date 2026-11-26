@@ -8,6 +8,8 @@ export type DockPosition = "left" | "bottom" | "right";
 export type DockDensity = "compact" | "normal" | "spacious";
 export type DockAutoHideSpeed = "smooth" | "normal" | "fast";
 export type TaskbarStyle = "clear" | "frosted" | "opaque";
+export type AiUsagePosition = "left" | "right";
+export type AiProvider = "claude" | "codex" | "antigravity" | "gemini" | "opencode" | "zai";
 /** `auto` follows Windows' light or dark mode. */
 export type Appearance = "auto" | "light" | "dark" | "frosted" | "clear" | "liquidGlass";
 
@@ -39,6 +41,10 @@ export interface Config {
   menuBarAutoHide: boolean;
   menuBarSmartHide?: boolean;
   aiUsage: boolean;
+  aiUsagePosition?: AiUsagePosition;
+  aiUsageIntervalMinutes?: number;
+  aiUsageOnlyRunning?: boolean;
+  aiUsageProviders?: AiProvider[];
   menuBarMusic: boolean;
   menuBarIslandStyle: IslandStyle;
   /** A bell at the right end of the menu bar that opens the notification center. */
@@ -67,6 +73,7 @@ export interface Config {
 
 export const ICON_SIZE = { min: 32, max: 96 } as const;
 export const MAX_MAGNIFIED_SIZE = 160;
+export const AI_USAGE_INTERVAL = { min: 1, max: 60 } as const;
 
 export const loadConfig = () => invoke<Config>("get_config");
 export const defaultConfig = () => invoke<Config>("default_config");

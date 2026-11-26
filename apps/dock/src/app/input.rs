@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use anyhow::Result;
-use navalia_shell::{pins::app_exists, tracker};
+use navalia_shell::{launcher, pins::app_exists, tracker};
 use windows::Win32::{
     Foundation::{HWND, POINT},
     UI::{
@@ -176,6 +176,9 @@ impl App {
         // itself, `on_click` then leaves it closed.
         self.group_was_open = self.group_view.as_ref().map(|view| view.group_id.clone());
         self.close_group_view();
+        // The dock never takes the focus, so Windows does not see this as a
+        // click outside a shell flyout opened from the menu bar.
+        launcher::dismiss_flyouts();
         let Some(at) = self.pointer_at_click()? else {
             return Ok(());
         };

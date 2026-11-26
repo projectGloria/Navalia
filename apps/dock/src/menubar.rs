@@ -17,7 +17,7 @@
 //! and volume changes arrive through separate notifications; nothing polls.
 
 use anyhow::Result;
-use navalia_config::{IslandStyle, Language};
+use navalia_config::{AiProvider, AiUsagePosition, IslandStyle, Language};
 use navalia_shell::{
     accessories::{Kind as AccessoryKind, Snapshot as AccessorySnapshot},
     appbar::AppBar,
@@ -133,7 +133,7 @@ const ISLAND_EXPANDED_WIDTH: f32 = 440.0;
 const ISLAND_ROW_HEIGHT: f32 = 118.0;
 const BUBBLE_VERTICAL_INSET: f32 = 2.5;
 const BUBBLE_MUSIC_WIDTH: f32 = 164.0;
-const BUBBLE_PROVIDER_WIDTH: f32 = 62.0;
+const BUBBLE_PROVIDER_WIDTH: f32 = 68.0;
 const BUBBLE_USAGE_PADDING: f32 = 16.0;
 const PANEL_GAP: f32 = 5.0;
 const PANEL_RADIUS: f32 = 18.0;
@@ -251,6 +251,29 @@ pub struct ItemMenu {
     pub pointer: (i32, i32),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiUsageSettings {
+    pub position: AiUsagePosition,
+    pub interval_minutes: u32,
+    pub only_running: bool,
+    pub providers: Vec<AiProvider>,
+}
+
+impl Default for AiUsageSettings {
+    fn default() -> Self {
+        Self {
+            position: AiUsagePosition::Right,
+            interval_minutes: 5,
+            only_running: false,
+            providers: vec![
+                AiProvider::Claude,
+                AiProvider::Codex,
+                AiProvider::Antigravity,
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuBarWidgets {
     pub island_style: IslandStyle,
@@ -317,6 +340,9 @@ struct Look {
     widgets: MenuBarWidgets,
     usage: Snapshot,
     usage_enabled: bool,
+    usage_position: AiUsagePosition,
+    usage_interval_minutes: u32,
+    usage_only_running: bool,
     active_providers: ActiveProviders,
     panel: Option<Island>,
     usage_refreshing: bool,
@@ -403,6 +429,7 @@ enum IslandAction {
     Volume(VolumeTrack),
     Mute,
     Refresh,
+    SignIn(Provider),
     ScrollUsage(i8),
 }
 
@@ -606,6 +633,7 @@ pub struct MenuBar {
     /// it lives outside `widgets` and changing it redraws nothing.
     clock_target: Option<String>,
     usage: Option<UsageMonitor>,
+    usage_settings: AiUsageSettings,
     /// Where each provider sits in the closed island, as screen x.
     usage_anchors: Vec<(Provider, i32)>,
     /// A moment for the crab, waiting for the dock (see `take_cue`).
@@ -634,6 +662,8 @@ pub struct MenuBar {
     panel: Option<Island>,
     visual_height: i32,
     triggers_span: Span,
+    music_trigger_span: Span,
+    usage_trigger_span: Span,
     panel_span: Span,
     island_hits: Vec<IslandHit>,
     outside_click_hook: Option<HHOOK>,
@@ -936,6 +966,7 @@ impl MenuBar {
             widgets,
             clock_target: None,
             usage: usage_enabled.then(|| UsageMonitor::new(hwnd.0 as isize, USAGE_CHANGED)),
+            usage_settings: AiUsageSettings::default(),
             usage_anchors: Vec::new(),
             cue: None,
             online: None,
@@ -958,6 +989,8 @@ impl MenuBar {
             panel: None,
             visual_height: 0,
             triggers_span: Span::default(),
+            music_trigger_span: Span::default(),
+            usage_trigger_span: Span::default(),
             panel_span: Span::default(),
             island_hits: Vec::new(),
             outside_click_hook: None,
@@ -1070,12 +1103,37 @@ impl MenuBar {
     /// bar. It slides away as when the pointer leaves an auto-hiding bar,
     /// unless the pointer is on it, and slides back once nothing covers it;
     /// meanwhile the top edge reveals it as usual.
-    pub fn set_usage_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
-        if self.usage.is_some() == enabled {
+    pub fn set_usage_settings(
+        &mut self,
+        gfx: &Gfx,
+        enabled: bool,
+        settings: AiUsageSettings,
+    ) -> Result<()> {
+        let was_enabled = self.usage.is_some();
+        if was_enabled == enabled && self.usage_settings == settings {
             return Ok(());
         }
-        self.usage = enabled.then(|| UsageMonitor::new(self.hwnd.0 as isize, USAGE_CHANGED));
+        self.usage_settings = settings;
+        if was_enabled != enabled {
+            self.usage = enabled.then(|| UsageMonitor::new(self.hwnd.0 as isize, USAGE_CHANGED));
+        }
+        if let Some(usage) = &mut self.usage {
+            let secs = u64::from(self.usage_settings.interval_minutes.max(1)) * 60;
+            usage.set_interval(Duration::from_secs(secs));
+        }
         self.refresh(gfx)
+    }
+
+    pub(super) fn target_providers(&self) -> ActiveProviders {
+        if self.usage.is_none() {
+            return ActiveProviders::default();
+        }
+        let configured = ActiveProviders::from_config(&self.usage_settings.providers);
+        if self.usage_settings.only_running {
+            configured.intersect(usage::active_providers())
+        } else {
+            configured
+        }
     }
 
     /// Shows or hides what is playing. Off, the media watch stops too, so

@@ -548,7 +548,8 @@ pub fn foreground_is_fullscreen(screen: RECT) -> bool {
         if pid == GetCurrentProcessId() {
             return false;
         }
-        fullscreen_owner_chain(hwnd, screen)
+        // The process is only looked up for a window that does fill the screen.
+        fullscreen_owner_chain(hwnd, screen) && !is_shell_surface(hwnd, pid)
     }
 }
 
@@ -697,6 +698,42 @@ pub fn is_task_switcher(hwnd: HWND) -> bool {
         class_name(hwnd).as_str(),
         "XamlExplorerHostIslandWindow" | "MultitaskingViewFrame"
     )
+}
+
+/// Executables of the shell's own surfaces: quick settings, the notification
+/// center, Start, Search and the touch keyboard.
+const SHELL_HOSTS: [&str; 6] = [
+    "shellhost.exe",
+    "shellexperiencehost.exe",
+    "startmenuexperiencehost.exe",
+    "searchhost.exe",
+    "searchapp.exe",
+    "textinputhost.exe",
+];
+
+/// Window classes of shell flyouts, whichever process draws them.
+const SHELL_FLYOUT_CLASSES: [&str; 3] = [
+    "ControlCenterWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+    "NotifyIconOverflowWindow",
+];
+
+/// A shell flyout or overlay (quick settings, the notification center, the
+/// hidden-icons flyout, Start, Search). Some lay a transparent screen-sized
+/// window under the panel to catch outside clicks; taken for a full-screen
+/// app, it hid the dock and the menu bar for as long as the panel was open.
+fn is_shell_surface(hwnd: HWND, pid: u32) -> bool {
+    if SHELL_FLYOUT_CLASSES.contains(&class_name(hwnd).as_str()) {
+        return true;
+    }
+    process_image(pid).is_some_and(|image| is_shell_host_image(&image))
+}
+
+fn is_shell_host_image(image: &str) -> bool {
+    let name = image.rsplit(['\\', '/']).next().unwrap_or(image);
+    SHELL_HOSTS
+        .iter()
+        .any(|host| name.eq_ignore_ascii_case(host))
 }
 
 /// A window that is briefly in front while Windows switches between two
@@ -929,6 +966,18 @@ pub fn request_close_window(hwnd: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_hosts_are_recognized_by_executable_name() {
+        assert!(is_shell_host_image(r"C:\Windows\System32\ShellHost.exe"));
+        assert!(is_shell_host_image(
+            r"C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe"
+        ));
+        assert!(!is_shell_host_image(
+            r"C:\Program Files\VideoLAN\VLC\vlc.exe"
+        ));
+        assert!(!is_shell_host_image(r"C:\Games\NotShellHost.exe"));
+    }
 
     #[test]
     fn a_running_program_is_found_by_its_full_path() -> std::io::Result<()> {

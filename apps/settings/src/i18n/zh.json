@@ -211,5 +211,17 @@
     "camera": "摄像头",
     "bluetooth": "蓝牙",
     "system_monitor": "系统监视器"
-  }
+  },
+  "aiTools": "AI 工具",
+  "aiToolsShow": "显示 AI 工具小组件",
+  "aiToolsShowHint": "使用本地会话显示所选 AI 工具的 5 小时剩余额度，不保存凭据。",
+  "aiUsagePosition": "状态栏位置",
+  "aiUsagePositionLeft": "左侧",
+  "aiUsagePositionRight": "右侧",
+  "aiUsageInterval": "检查间隔",
+  "aiUsageIntervalHint": "每隔几分钟在后台静默检查一次。",
+  "aiUsageOnlyRunning": "仅显示运行中的应用",
+  "aiUsageOnlyRunningHint": "隐藏当前未打开客户端或 CLI 的工具。",
+  "aiToolsList": "工具",
+  "aiProviderZai": "Z.ai GLM"
 }

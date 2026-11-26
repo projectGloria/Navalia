@@ -31,10 +31,11 @@ use super::{
     EDGE_TIMER, FULLSCREEN_TIMER, HEALTH_CHECK, HIDE_TIMER, HSHELL_FLASH, HSHELL_LANGUAGE,
     HSHELL_REDRAW, HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWDESTROYED,
     LAST_FRONT, MASCOT_TIMER, Outside, PBT_APMPOWERSTATUSCHANGE, PBT_APMRESUMEAUTOMATIC,
-    PBT_POWERSETTINGCHANGE, PINS_CHANGED, PINS_DELAY_MS, PINS_TIMER, REFRESH_DELAY_MS,
-    REFRESH_TIMER, SHELL_HOOK, SPI_SETWORKAREA, SPRING_TIMER, SWITCHER_TIMER, SYNC_DELAY_MS,
-    SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_PREFS_CHANGED, TASKBAR_TAKEN,
-    TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WELCOME_TIMER, WM_MOUSELEAVE, WM_POWERBROADCAST,
+    PBT_POWERSETTINGCHANGE, PINS_CHANGED, PINS_DELAY_MS, PINS_TIMER, RAISE_DELAY_MS, RAISE_TIMER,
+    REFRESH_DELAY_MS, REFRESH_TIMER, SHELL_HOOK, SPI_SETWORKAREA, SPRING_TIMER, SWITCHER_TIMER,
+    SYNC_DELAY_MS, SYNC_TIMER, TASKBAR_CREATED, TASKBAR_DELAY_MS, TASKBAR_PREFS_CHANGED,
+    TASKBAR_TAKEN, TASKBAR_TIMER, TRIM_TIMER, UPDATE_TIMER, WELCOME_TIMER, WM_MOUSELEAVE,
+    WM_POWERBROADCAST,
     feedback::query_bin_in_background,
     lifecycle::{is_tracked, main_window},
     with_app, with_app_now, with_app_then,
@@ -88,8 +89,17 @@ pub(super) unsafe extern "system" fn on_win_event(
         // Only the foreground top-level window matters. Ignore child controls,
         // carets and background animations, and coalesce resize bursts using
         // the existing full-screen timer, without enumerating apps or polling.
-        if child == 0 && hwnd.0 as isize == tracker::foreground_window() {
+        if child != 0 {
+            return;
+        }
+        if hwnd.0 as isize == tracker::foreground_window() {
             unsafe { SetTimer(Some(main_window()), FULLSCREEN_TIMER, SYNC_DELAY_MS, None) };
+        }
+        // Opening a shell flyout slides Explorer's auto-hidden taskbar in and
+        // lifts it over every topmost window, the dock and menu bar included.
+        if taskbar::has_taskbar_class(hwnd) {
+            // SAFETY: A timer on our own window.
+            unsafe { SetTimer(Some(main_window()), RAISE_TIMER, RAISE_DELAY_MS, None) };
         }
     } else if event == EVENT_SYSTEM_MOVESIZEEND {
         // A window let go of after a drag, even one that did not move at the
@@ -507,6 +517,13 @@ pub(super) unsafe extern "system" fn wndproc(
         }
         WM_TIMER if w.0 == SWITCHER_TIMER => {
             with_app("Alt+Tab", App::check_task_switcher);
+        }
+        WM_TIMER if w.0 == RAISE_TIMER => {
+            // SAFETY: `hwnd` is this live window on its owning UI thread.
+            unsafe {
+                let _ = KillTimer(Some(hwnd), w.0);
+            }
+            with_app("raise above taskbar", App::raise_above_taskbar);
         }
         WM_TIMER if w.0 == FULLSCREEN_TIMER => {
             with_app("full screen", App::update_fullscreen);

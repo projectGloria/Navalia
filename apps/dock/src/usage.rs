@@ -31,7 +31,7 @@ use windows::Win32::{
     UI::WindowsAndMessaging::PostMessageW,
 };
 
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// How long one refresh may take in the worker. Each request has its own
 /// timeout, but a slow machine probing every provider adds them up; past
 /// this the worker is ended and the next refresh tries again.
@@ -75,6 +75,27 @@ impl Window {
         self.resets_at
             .map(|time| time.with_timezone(&Local).format("%d/%m %H:%M").to_string())
     }
+
+    pub fn left_percent(&self) -> u8 {
+        100u8.saturating_sub(self.used_percent.min(100))
+    }
+
+    pub fn reset_countdown(&self, now: DateTime<Utc>) -> Option<String> {
+        let secs = (self.resets_at? - now).num_seconds();
+        if secs <= 0 {
+            return None;
+        }
+        let total_minutes = (secs + 59) / 60;
+        let hours = total_minutes / 60;
+        let mins = total_minutes % 60;
+        Some(if hours > 0 && mins > 0 {
+            format!("{hours}h{mins:02}m")
+        } else if hours > 0 {
+            format!("{hours}h")
+        } else {
+            format!("{mins}m")
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,15 +117,32 @@ impl Default for ProviderUsage {
 
 impl ProviderUsage {
     pub fn compact_text(&self) -> String {
-        if let Some(window) = self.main_window() {
-            format!("{}%", window.used_percent)
+        self.compact_text_at(Utc::now())
+    }
+
+    pub fn compact_text_at(&self, now: DateTime<Utc>) -> String {
+        if let Some(window) = self.five_hour_window() {
+            let left = window.left_percent();
+            if left == 0
+                && let Some(countdown) = window.reset_countdown(now)
+            {
+                return countdown;
+            }
+            format!("{left}%")
         } else {
             "—".to_owned()
         }
     }
 
+    pub fn five_hour_window(&self) -> Option<&Window> {
+        self.windows
+            .iter()
+            .find(|window| (240..=360).contains(&window.minutes))
+            .or_else(|| self.windows.first())
+    }
+
     pub fn main_window(&self) -> Option<&Window> {
-        self.windows.first()
+        self.five_hour_window()
     }
 
     pub fn age_minutes(&self) -> Option<u64> {
@@ -122,11 +160,19 @@ impl Snapshot {
         &self.providers[provider as usize]
     }
 
-    /// OpenCode's process also serves Zen and unrelated providers. Only real
-    /// Go or Z.ai quota windows justify their indicator; a running process alone does not.
-    pub fn visible_providers(&self, mut active: ActiveProviders) -> ActiveProviders {
-        active.0[Provider::OpenCode as usize] &= !self.get(Provider::OpenCode).windows.is_empty();
-        active.0[Provider::Zai as usize] &= !self.get(Provider::Zai).windows.is_empty();
+    /// OpenCode's process also serves Zen and unrelated providers. When
+    /// filtering by running processes, only real Go or Z.ai quota windows
+    /// justify their indicator; a running process alone does not.
+    pub fn visible_providers(
+        &self,
+        mut active: ActiveProviders,
+        only_running: bool,
+    ) -> ActiveProviders {
+        if only_running {
+            active.0[Provider::OpenCode as usize] &=
+                !self.get(Provider::OpenCode).windows.is_empty();
+            active.0[Provider::Zai as usize] &= !self.get(Provider::Zai).windows.is_empty();
+        }
         active
     }
 }
@@ -136,27 +182,65 @@ impl Snapshot {
 pub enum Provider {
     Claude,
     Codex,
-    OpenCode,
+    Antigravity,
     Gemini,
+    OpenCode,
     Zai,
 }
 
 impl Provider {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     pub const ALL: [Self; Self::COUNT] = [
         Self::Claude,
         Self::Codex,
-        Self::OpenCode,
+        Self::Antigravity,
         Self::Gemini,
+        Self::OpenCode,
         Self::Zai,
     ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
+            Self::Gemini => "gemini",
+            Self::OpenCode => "opencode",
+            Self::Zai => "zai",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "antigravity" => Some(Self::Antigravity),
+            "gemini" => Some(Self::Gemini),
+            "opencode" => Some(Self::OpenCode),
+            "zai" => Some(Self::Zai),
+            _ => None,
+        }
+    }
+
+    pub fn from_config(provider: navalia_config::AiProvider) -> Option<Self> {
+        match provider {
+            navalia_config::AiProvider::Claude => Some(Self::Claude),
+            navalia_config::AiProvider::Codex => Some(Self::Codex),
+            navalia_config::AiProvider::Antigravity => Some(Self::Antigravity),
+            navalia_config::AiProvider::Gemini => Some(Self::Gemini),
+            navalia_config::AiProvider::OpenCode => Some(Self::OpenCode),
+            navalia_config::AiProvider::Zai => Some(Self::Zai),
+            navalia_config::AiProvider::Unknown => None,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode Go",
+            Self::Antigravity => "Antigravity",
             Self::Gemini => "Gemini",
+            Self::OpenCode => "OpenCode Go",
             Self::Zai => "Z.ai GLM",
         }
     }
@@ -176,6 +260,43 @@ impl ActiveProviders {
 
     pub fn has(self, provider: Provider) -> bool {
         self.0[provider as usize]
+    }
+
+    pub fn from_config(providers: &[navalia_config::AiProvider]) -> Self {
+        let mut active = Self::default();
+        for &provider in providers {
+            if let Some(p) = Provider::from_config(provider) {
+                active.0[p as usize] = true;
+            }
+        }
+        active
+    }
+
+    pub fn intersect(self, other: Self) -> Self {
+        let mut combined = Self::default();
+        for (dst, (a, b)) in combined.0.iter_mut().zip(self.0.iter().zip(other.0)) {
+            *dst = *a && b;
+        }
+        combined
+    }
+
+    pub fn to_cli_arg(self) -> String {
+        Provider::ALL
+            .into_iter()
+            .filter(|provider| self.has(*provider))
+            .map(Provider::id)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    pub fn from_cli_arg(arg: &str) -> Self {
+        let mut active = Self::default();
+        for part in arg.split(',') {
+            if let Some(provider) = Provider::from_id(part.trim()) {
+                active.0[provider as usize] = true;
+            }
+        }
+        active
     }
 }
 
@@ -213,9 +334,8 @@ pub fn active_providers() -> ActiveProviders {
                     active.0[Provider::Zai as usize] = true;
                 }
                 "zai.exe" => active.0[Provider::Zai as usize] = true,
-                "gemini.exe" | "antigravity.exe" | "agy.exe" => {
-                    active.0[Provider::Gemini as usize] = true;
-                }
+                "antigravity.exe" | "agy.exe" => active.0[Provider::Antigravity as usize] = true,
+                "gemini.exe" => active.0[Provider::Gemini as usize] = true,
                 _ => {}
             }
             if active.count() == Provider::COUNT {
@@ -333,8 +453,9 @@ fn console_image(path: &Path) -> Option<bool> {
 pub fn logo(provider: Provider) -> Option<&'static IconImage> {
     static CLAUDE: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
     static CODEX: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
-    static OPENCODE: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
+    static ANTIGRAVITY: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
     static GEMINI: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
+    static OPENCODE: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
     static ZAI: std::sync::OnceLock<Option<IconImage>> = std::sync::OnceLock::new();
     match provider {
         Provider::Claude => CLAUDE
@@ -343,11 +464,14 @@ pub fn logo(provider: Provider) -> Option<&'static IconImage> {
         Provider::Codex => CODEX
             .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/codex.png")))
             .as_ref(),
-        Provider::OpenCode => OPENCODE
-            .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/opencode.png")))
+        Provider::Antigravity => ANTIGRAVITY
+            .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/antigravity.png")))
             .as_ref(),
         Provider::Gemini => GEMINI
             .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/gemini.png")))
+            .as_ref(),
+        Provider::OpenCode => OPENCODE
+            .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/opencode.png")))
             .as_ref(),
         Provider::Zai => ZAI
             .get_or_init(|| decode_logo(include_bytes!("../../../assets/usage/zai.png")))
@@ -385,6 +509,7 @@ pub struct Monitor {
     current: Arc<Mutex<Snapshot>>,
     running: Arc<AtomicBool>,
     alive: Arc<AtomicBool>,
+    interval: Duration,
     last_started: Option<Instant>,
     last_active: ActiveProviders,
     hwnd: isize,
@@ -397,11 +522,16 @@ impl Monitor {
             current: Arc::new(Mutex::new(Snapshot::default())),
             running: Arc::new(AtomicBool::new(false)),
             alive: Arc::new(AtomicBool::new(true)),
+            interval: DEFAULT_REFRESH_INTERVAL,
             last_started: None,
             last_active: ActiveProviders::default(),
             hwnd,
             changed_message,
         }
+    }
+
+    pub fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -419,34 +549,33 @@ impl Monitor {
         self.last_active = ActiveProviders::default();
     }
 
-    pub fn refresh(&mut self, force: bool) {
+    pub fn refresh(&mut self, targets: ActiveProviders, force: bool) {
         if self.running.swap(true, Ordering::AcqRel) {
             return;
         }
-        let active = active_providers();
-        if !active.any() {
+        if !targets.any() {
             self.running.store(false, Ordering::Release);
             self.mark_inactive();
             return;
         }
         if !force
-            && active == self.last_active
+            && targets == self.last_active
             && self
                 .last_started
-                .is_some_and(|then| then.elapsed() < REFRESH_INTERVAL)
+                .is_some_and(|then| then.elapsed() < self.interval)
         {
             self.running.store(false, Ordering::Release);
             return;
         }
         self.last_started = Some(Instant::now());
-        self.last_active = active;
+        self.last_active = targets;
         let current = Arc::clone(&self.current);
         let running = Arc::clone(&self.running);
         let alive = Arc::clone(&self.alive);
         let hwnd = self.hwnd;
         let message = self.changed_message;
         thread::spawn(move || {
-            let fetched = fetch_in_child();
+            let fetched = fetch_in_child(targets);
             {
                 let mut stored = current
                     .lock()
@@ -466,21 +595,54 @@ impl Monitor {
     }
 }
 
-pub fn worker_main() -> anyhow::Result<()> {
-    serde_json::to_writer(std::io::stdout().lock(), &fetch_all())?;
+pub fn worker_main(filter: Option<&str>) -> anyhow::Result<()> {
+    let active = filter.map_or_else(active_providers, ActiveProviders::from_cli_arg);
+    serde_json::to_writer(std::io::stdout().lock(), &fetch_all(active))?;
     Ok(())
 }
 
-fn fetch_in_child() -> Snapshot {
-    run_worker().unwrap_or_else(unavailable_snapshot)
+/// Opens the provider's native sign-in flow (interactive CLI terminal or app/portal).
+pub fn launch_sign_in(provider: Provider) {
+    let open_cli = |command: &str| {
+        let _ = Command::new("cmd")
+            .args(["/c", "start", "", "cmd", "/k", command])
+            .creation_flags(0x0800_0000)
+            .spawn();
+    };
+    match provider {
+        Provider::Claude => open_cli("claude auth login"),
+        Provider::Codex => open_cli("codex login"),
+        Provider::Antigravity => {
+            if navalia_shell::launcher::open("antigravity://").is_err() {
+                let _ = Command::new("cmd")
+                    .args(["/c", "start", "", "antigravity"])
+                    .creation_flags(0x0800_0000)
+                    .spawn();
+            }
+        }
+        Provider::Gemini => open_cli("gemini"),
+        Provider::OpenCode => open_cli("opencode auth login"),
+        Provider::Zai => {
+            let _ = navalia_shell::launcher::open("https://z.ai");
+        }
+    }
+}
+
+fn fetch_in_child(targets: ActiveProviders) -> Snapshot {
+    run_worker(targets).unwrap_or_else(unavailable_snapshot)
 }
 
 /// Runs the worker in a job (it ends with the dock) and under a deadline,
 /// so a stuck request can never keep later refreshes from starting.
-fn run_worker() -> Option<Snapshot> {
+fn run_worker(targets: ActiveProviders) -> Option<Snapshot> {
     let job = crate::accessories::WorkerJob::new().ok()?;
-    let mut child = Command::new(env::current_exe().ok()?)
-        .arg("--usage-worker")
+    let filter = targets.to_cli_arg();
+    let mut cmd = Command::new(env::current_exe().ok()?);
+    cmd.arg("--usage-worker");
+    if !filter.is_empty() {
+        cmd.arg(filter);
+    }
+    let mut child = cmd
         .creation_flags(0x0800_0000)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -536,11 +698,10 @@ fn merge(previous: &mut ProviderUsage, fetched: ProviderUsage) {
     }
 }
 
-fn fetch_all() -> Snapshot {
+fn fetch_all(active: ActiveProviders) -> Snapshot {
     let Ok(client) = Client::builder().timeout(Duration::from_secs(6)).build() else {
         return unavailable_snapshot();
     };
-    let active = active_providers();
     Snapshot {
         providers: std::array::from_fn(|index| {
             let provider = Provider::ALL[index];
@@ -550,8 +711,9 @@ fn fetch_all() -> Snapshot {
             match provider {
                 Provider::Claude => fetch_claude(&client),
                 Provider::Codex => fetch_codex(&client),
-                Provider::OpenCode => fetch_opencode(&client),
+                Provider::Antigravity => fetch_antigravity().unwrap_or_else(unavailable),
                 Provider::Gemini => fetch_gemini(&client),
+                Provider::OpenCode => fetch_opencode(&client),
                 Provider::Zai => fetch_zai(&client),
             }
         }),
@@ -988,11 +1150,6 @@ fn parse_zai(value: &Value) -> Vec<Window> {
 }
 
 fn fetch_gemini(client: &Client) -> ProviderUsage {
-    // Antigravity and Gemini CLI have distinct accounts and quotas. Prefer the
-    // running desktop app's own local quota service when it is available.
-    if let Some(usage) = fetch_antigravity() {
-        return usage;
-    }
     let Some(path) = home().map(|path| path.join(".gemini/oauth_creds.json")) else {
         return unavailable();
     };
@@ -1492,17 +1649,39 @@ mod tests {
         let mut active = ActiveProviders::default();
         active.0[Provider::OpenCode as usize] = true;
         active.0[Provider::Claude as usize] = true;
-        assert!(!snapshot.visible_providers(active).has(Provider::OpenCode));
-        assert!(snapshot.visible_providers(active).has(Provider::Claude));
+        assert!(
+            !snapshot
+                .visible_providers(active, true)
+                .has(Provider::OpenCode)
+        );
+        assert!(
+            snapshot
+                .visible_providers(active, true)
+                .has(Provider::Claude)
+        );
+        // When explicitly enabled (not filtering by running apps), it stays visible.
+        assert!(
+            snapshot
+                .visible_providers(active, false)
+                .has(Provider::OpenCode)
+        );
         snapshot.providers[Provider::OpenCode as usize] = ready(parse_opencode(&json!({"usage": {
             "rolling": {"percent": 15}, "weekly": {"percent": 35}, "monthly": {"percent": 50}
         }})));
-        assert!(snapshot.visible_providers(active).has(Provider::OpenCode));
+        assert!(
+            snapshot
+                .visible_providers(active, true)
+                .has(Provider::OpenCode)
+        );
         assert_eq!(Provider::OpenCode.name(), "OpenCode Go");
-        assert_eq!(snapshot.get(Provider::OpenCode).compact_text(), "15%");
+        assert_eq!(snapshot.get(Provider::OpenCode).compact_text(), "85%");
         assert_eq!(snapshot.get(Provider::OpenCode).windows.len(), 3);
         active.0[Provider::OpenCode as usize] = false;
-        assert!(!snapshot.visible_providers(active).has(Provider::OpenCode));
+        assert!(
+            !snapshot
+                .visible_providers(active, true)
+                .has(Provider::OpenCode)
+        );
     }
 
     #[test]
@@ -1529,7 +1708,7 @@ mod tests {
         let fetched_at = previous.fetched_at;
         merge(&mut previous, unavailable());
         assert!(previous.state == State::Unavailable);
-        assert_eq!(previous.compact_text(), "42%");
+        assert_eq!(previous.compact_text(), "58%");
         assert_eq!(previous.fetched_at, fetched_at);
         merge(&mut previous, sign_in());
         assert!(previous.windows.is_empty());
@@ -1840,7 +2019,7 @@ mod tests {
         let mut snapshot = Snapshot::default();
         let mut active = ActiveProviders::default();
         active.0[Provider::Zai as usize] = true;
-        assert!(!snapshot.visible_providers(active).has(Provider::Zai));
+        assert!(!snapshot.visible_providers(active, true).has(Provider::Zai));
 
         snapshot.providers[Provider::Zai as usize] = ready(vec![Window {
             label: None,
@@ -1848,12 +2027,80 @@ mod tests {
             used_percent: 15,
             resets_at: None,
         }]);
-        assert!(snapshot.visible_providers(active).has(Provider::Zai));
+        assert!(snapshot.visible_providers(active, true).has(Provider::Zai));
         assert_eq!(Provider::Zai.name(), "Z.ai GLM");
-        assert_eq!(snapshot.get(Provider::Zai).compact_text(), "15%");
+        assert_eq!(snapshot.get(Provider::Zai).compact_text(), "85%");
 
         active.0[Provider::Zai as usize] = false;
-        assert!(!snapshot.visible_providers(active).has(Provider::Zai));
+        assert!(!snapshot.visible_providers(active, true).has(Provider::Zai));
+    }
+
+    #[test]
+    fn five_hour_left_percent_and_exhausted_countdown_format_cleanly() -> anyhow::Result<()> {
+        let now = DateTime::parse_from_rfc3339("2026-11-26T17:00:00Z")?.with_timezone(&Utc);
+        let usage = ready(vec![
+            Window {
+                label: None,
+                minutes: 10_080,
+                used_percent: 20,
+                resets_at: None,
+            },
+            Window {
+                label: None,
+                minutes: 300,
+                used_percent: 100,
+                resets_at: Some(
+                    DateTime::parse_from_rfc3339("2026-11-26T19:35:00Z")?.with_timezone(&Utc),
+                ),
+            },
+        ]);
+        assert_eq!(usage.five_hour_window().map(|w| w.minutes), Some(300));
+        assert_eq!(usage.compact_text_at(now), "2h35m");
+
+        let exact_hours = ready(vec![Window {
+            label: None,
+            minutes: 300,
+            used_percent: 100,
+            resets_at: Some(
+                DateTime::parse_from_rfc3339("2026-11-26T19:00:00Z")?.with_timezone(&Utc),
+            ),
+        }]);
+        assert_eq!(exact_hours.compact_text_at(now), "2h");
+
+        let mins_only = ready(vec![Window {
+            label: None,
+            minutes: 300,
+            used_percent: 100,
+            resets_at: Some(
+                DateTime::parse_from_rfc3339("2026-11-26T17:42:00Z")?.with_timezone(&Utc),
+            ),
+        }]);
+        assert_eq!(mins_only.compact_text_at(now), "42m");
+
+        let past_reset = ready(vec![Window {
+            label: None,
+            minutes: 300,
+            used_percent: 100,
+            resets_at: Some(
+                DateTime::parse_from_rfc3339("2026-11-26T16:59:00Z")?.with_timezone(&Utc),
+            ),
+        }]);
+        assert_eq!(past_reset.compact_text_at(now), "0%");
+
+        let remaining = ready(vec![Window {
+            label: None,
+            minutes: 300,
+            used_percent: 27,
+            resets_at: Some(
+                DateTime::parse_from_rfc3339("2026-11-26T19:35:00Z")?.with_timezone(&Utc),
+            ),
+        }]);
+        assert_eq!(remaining.compact_text_at(now), "73%");
+        assert_eq!(
+            ActiveProviders::from_cli_arg("claude,antigravity,zai").to_cli_arg(),
+            "claude,antigravity,zai"
+        );
+        Ok(())
     }
 
     #[test]

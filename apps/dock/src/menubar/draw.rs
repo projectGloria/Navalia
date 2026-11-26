@@ -173,9 +173,10 @@ pub(super) fn draw_usage_row(
     accent: Color,
     scale: f32,
     light: bool,
+    usage_interval_minutes: u32,
     island_width: f32,
     y: f32,
-) -> Result<()> {
+) -> Result<Option<(f32, f32, f32, f32)>> {
     let c = &gfx.compositor;
     let px = |logical: f32| (logical * scale).round();
     let ink = if light { Ink::Dark } else { Ink::Light };
@@ -197,15 +198,18 @@ pub(super) fn draw_usage_row(
     if let Some(image) = usage::logo(provider) {
         let icon_size = px(20.0) as u32;
         let image_brush = gfx.icon_brush(image, icon_size)?;
-        let brush: CompositionBrush =
-            if !matches!(provider, Provider::Claude | Provider::Gemini) && light {
-                let tinted = c.CreateMaskBrush()?;
-                tinted.SetMask(&image_brush)?;
-                tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
-                tinted.cast()?
-            } else {
-                image_brush.cast()?
-            };
+        let brush: CompositionBrush = if !matches!(
+            provider,
+            Provider::Claude | Provider::Antigravity | Provider::Gemini
+        ) && light
+        {
+            let tinted = c.CreateMaskBrush()?;
+            tinted.SetMask(&image_brush)?;
+            tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
+            tinted.cast()?
+        } else {
+            image_brush.cast()?
+        };
         add_visual(
             c,
             layers,
@@ -228,7 +232,18 @@ pub(super) fn draw_usage_row(
         ink,
         1.0,
     )?;
-    if let Some(main) = usage.main_window() {
+    if let Some(main) = usage.five_hour_window() {
+        let left_pct = main.left_percent();
+        let now = chrono::Utc::now();
+        let exhausted_countdown = (left_pct == 0).then(|| main.reset_countdown(now)).flatten();
+        let big_value = exhausted_countdown
+            .clone()
+            .unwrap_or_else(|| format!("{left_pct}%"));
+        let sub_label = if exhausted_countdown.is_some() {
+            text.usage_resets
+        } else {
+            text.usage_left
+        };
         add_panel_text(
             gfx,
             layers,
@@ -244,7 +259,7 @@ pub(super) fn draw_usage_row(
         add_panel_text_right(
             gfx,
             layers,
-            &format!("{}%", main.used_percent),
+            &big_value,
             right - px(14.0),
             y + px(6.0),
             scale,
@@ -256,7 +271,7 @@ pub(super) fn draw_usage_row(
         add_panel_text_right(
             gfx,
             layers,
-            text.usage_used,
+            sub_label,
             right - px(15.0),
             y + px(31.0),
             scale,
@@ -283,7 +298,7 @@ pub(super) fn draw_usage_row(
             },
             None,
         )?;
-        let fill = track_width * f32::from(main.used_percent) / 100.0;
+        let fill = track_width * f32::from(left_pct) / 100.0;
         if fill > 0.0 {
             add_rounded_box(
                 c,
@@ -312,7 +327,9 @@ pub(super) fn draw_usage_row(
             )?;
         }
         if usage.state == State::Unavailable
-            || usage.age_minutes().is_some_and(|minutes| minutes > 5)
+            || usage
+                .age_minutes()
+                .is_some_and(|minutes| minutes > u64::from(usage_interval_minutes.max(5)))
         {
             add_panel_text(
                 gfx,
@@ -327,7 +344,12 @@ pub(super) fn draw_usage_row(
                 0.7,
             )?;
         }
-        for (index, secondary) in usage.windows.iter().skip(1).enumerate() {
+        for (index, secondary) in usage
+            .windows
+            .iter()
+            .filter(|w| !std::ptr::eq(*w, main))
+            .enumerate()
+        {
             add_visual(
                 c,
                 layers,
@@ -345,7 +367,12 @@ pub(super) fn draw_usage_row(
             add_panel_text(
                 gfx,
                 layers,
-                &format!("{} · {}%", secondary.title(), secondary.used_percent),
+                &format!(
+                    "{} · {}% {}",
+                    secondary.title(),
+                    secondary.left_percent(),
+                    text.usage_left
+                ),
                 left + px(14.0),
                 y + px(87.0 + index as f32 * 26.0),
                 scale,
@@ -376,6 +403,57 @@ pub(super) fn draw_usage_row(
             State::SignIn => text.usage_sign_in,
             State::Ready | State::Unavailable => text.usage_unavailable,
         };
+        if matches!(usage.state, State::SignIn | State::Unavailable) {
+            let button_label =
+                gfx.text_brush_sized(text.usage_sign_in_button, scale, 11.5, true, ink)?;
+            let button_width = button_label.width + px(20.0);
+            let button_height = px(27.0);
+            let button_left = right - px(14.0) - button_width;
+            let button_top = y + px(34.0);
+            let fill = if light {
+                rgba(0, 0, 0, 18)
+            } else {
+                rgba(255, 255, 255, 27)
+            };
+            let border = if light {
+                rgba(35, 57, 83, 31)
+            } else {
+                rgba(223, 237, 255, 37)
+            };
+            add_rounded_box(
+                c,
+                layers,
+                button_left,
+                button_top,
+                button_width,
+                button_height,
+                px(13.5),
+                fill,
+                Some(border),
+            )?;
+            add_visual(
+                c,
+                layers,
+                &button_label.brush.cast()?,
+                button_left + px(10.0),
+                button_top + (button_height - button_label.height) / 2.0,
+                button_label.width,
+                button_label.height,
+            )?;
+            let max_msg_width = (button_left - (left + px(53.0)) - px(10.0)).max(px(40.0));
+            let label = gfx.text_brush_fitted(message, scale, 12.0, false, ink, max_msg_width)?;
+            add_visual(
+                c,
+                layers,
+                &label.brush.cast()?,
+                left + px(53.0),
+                y + px(40.0),
+                label.width,
+                label.height,
+            )?
+            .SetOpacity(0.72)?;
+            return Ok(Some((button_left, button_top, button_width, button_height)));
+        }
         add_panel_text(
             gfx,
             layers,
@@ -389,7 +467,7 @@ pub(super) fn draw_usage_row(
             0.72,
         )?;
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(super) fn usage_row_height(usage: &ProviderUsage) -> f32 {
@@ -746,10 +824,13 @@ impl MenuBar {
         self.progress_controls = None;
         self.usage_viewport = None;
         self.triggers_span = Span::default();
+        self.music_trigger_span = Span::default();
+        self.usage_trigger_span = Span::default();
         self.panel_span = Span::default();
         self.draw_island(
             gfx,
             look,
+            effective_light,
             &layers,
             width,
             height,
@@ -783,12 +864,14 @@ impl MenuBar {
             right: screen.right,
             bottom: screen.bottom,
         };
-        TRIGGERS_LEFT.store(
-            screen.left + self.triggers_span.left as i32,
-            Ordering::Relaxed,
-        );
+        let active_triggers = match look.panel {
+            Some(Island::Music) => self.music_trigger_span,
+            Some(Island::Usage) => self.usage_trigger_span,
+            None => self.triggers_span,
+        };
+        TRIGGERS_LEFT.store(screen.left + active_triggers.left as i32, Ordering::Relaxed);
         TRIGGERS_RIGHT.store(
-            screen.left + self.triggers_span.right as i32,
+            screen.left + active_triggers.right as i32,
             Ordering::Relaxed,
         );
         PANEL_LEFT.store(screen.left + self.panel_span.left as i32, Ordering::Relaxed);
@@ -823,6 +906,7 @@ impl MenuBar {
         &mut self,
         gfx: &Gfx,
         look: &Look,
+        effective_light: bool,
         layers: &VisualCollection,
         width: f32,
         bar_height: f32,
@@ -866,129 +950,160 @@ impl MenuBar {
         } else {
             None
         };
-        let right_triggers = bubble_trigger_layout(
+        let providers = island_providers(look);
+        let prepared_usage = if !providers.is_empty() {
+            Some(prepare_usage_strip(gfx, look, effective_light, &providers)?)
+        } else {
+            None
+        };
+
+        let music = bubble_trigger_layout(
             Span {
                 left: left_end,
                 right: right_start,
             },
             look.scale,
             prepared_music.as_ref().map(|music| music.width),
-            look.active_providers.count(),
-        );
-        let triggers = if right_triggers[0].1.is_some() || right_triggers[1].1.is_some() {
-            right_triggers
-        } else if let Some((c_left, _)) = cutout {
-            bubble_trigger_layout(
-                Span {
-                    left: left_wing_end,
-                    right: (c_left - px(12.0)).max(left_wing_end),
-                },
-                look.scale,
-                prepared_music.as_ref().map(|music| music.width),
-                look.active_providers.count(),
-            )
-        } else {
-            right_triggers
-        };
-        let [(_, music), (_, usage)] = triggers;
-        let (Some(first), Some(last)) = (music.or(usage), usage.or(music)) else {
-            return Ok(());
-        };
-        self.triggers_span = Span {
-            left: first.left,
-            right: last.right,
-        };
-        let geometry = IslandGeometry::new(self.triggers_span, bar_y, look);
-        let (compact, compact_height, divider_inset) = {
-            let (surface, pill_height) = bubble_surface(gfx, look, layers, geometry, bar_height)?;
-            (surface, pill_height, px(5.0))
-        };
-        let divider = music
-            .zip(usage)
-            .map(|(music, usage)| ((music.right + usage.left) / 2.0).round());
-        let c = &gfx.compositor;
-        if let Some(x) = divider {
-            add_visual(
-                c,
-                &compact,
-                &c.CreateColorBrushWithColor(geometry.border())?.cast()?,
-                x - self.triggers_span.left,
-                divider_inset,
-                px(1.0).max(1.0),
-                (compact_height - 2.0 * divider_inset).max(1.0),
-            )?;
-        }
-        let providers = island_providers(look);
-        for (kind, span) in triggers {
-            let Some(span) = span else {
-                continue;
+            0,
+        )[0]
+        .1;
+
+        let usage = prepared_usage.as_ref().and_then(|strip| {
+            let right_max = music.map_or(right_start, |m| m.left - px(12.0));
+            let left_bounds = Span {
+                left: (left_wing_end + px(4.0)).min(cutout.map_or(left_end, |(c_left, _)| c_left)),
+                right: cutout.map_or(left_end, |(c_left, _)| {
+                    (c_left - px(12.0)).max(left_wing_end)
+                }),
             };
-            let geometry = IslandGeometry::new(span, 0.0, look);
-            let segment = c.CreateContainerVisual()?;
-            segment.SetSize(Vector2::new(geometry.width, compact_height))?;
-            segment.SetOffset(Vector3::new(span.left - self.triggers_span.left, 0.0, 0.0))?;
-            let content = segment.Children()?;
-            compact.InsertAtTop(&segment)?;
-            match kind {
-                Island::Music => {
-                    if let Some(track) = &look.track {
-                        match style {
-                            IslandStyle::Notch => draw_compact_player(
-                                gfx,
-                                &content,
-                                geometry,
-                                geometry.width,
-                                compact_height,
-                                track,
-                                cover.as_ref(),
-                            )?,
-                            IslandStyle::Bubble => {
-                                if let Some(prepared) = &prepared_music {
-                                    draw_bubble_player(
-                                        gfx,
-                                        &content,
-                                        geometry,
-                                        compact_height,
-                                        track,
-                                        prepared,
-                                        cover.as_ref(),
-                                    )?;
-                                }
-                            }
+            if look.usage_position == AiUsagePosition::Left {
+                let w = strip.fitting_width(left_bounds.width());
+                (w > 0.0).then(|| {
+                    let left = (left_bounds.left + (left_bounds.width() - w) / 2.0).round();
+                    Span {
+                        left,
+                        right: left + w,
+                    }
+                })
+            } else {
+                let right_avail = (right_max - left_end).max(0.0);
+                let w = strip.fitting_width(right_avail);
+                if w > 0.0 {
+                    let left = (left_end + (right_avail - w) / 2.0).round();
+                    Some(Span {
+                        left,
+                        right: left + w,
+                    })
+                } else {
+                    let lw = strip.fitting_width(left_bounds.width());
+                    (lw > 0.0).then(|| {
+                        let left = (left_bounds.left + (left_bounds.width() - lw) / 2.0).round();
+                        Span {
+                            left,
+                            right: left + lw,
                         }
+                    })
+                }
+            }
+        });
+
+        self.music_trigger_span = music.unwrap_or_default();
+        self.usage_trigger_span = usage.unwrap_or_default();
+        if music.is_none() && usage.is_none() {
+            return Ok(());
+        }
+        self.triggers_span = Span {
+            left: [music, usage]
+                .into_iter()
+                .flatten()
+                .map(|s| s.left)
+                .fold(f32::INFINITY, f32::min),
+            right: [music, usage]
+                .into_iter()
+                .flatten()
+                .map(|s| s.right)
+                .fold(f32::NEG_INFINITY, f32::max),
+        };
+
+        let c = &gfx.compositor;
+        if let Some(span) = music
+            && let Some(track) = &look.track
+        {
+            let pill_geom = IslandGeometry::new(span, bar_y, look);
+            let (compact, compact_height) =
+                bubble_surface(gfx, look, layers, pill_geom, bar_height)?;
+            let geometry = IslandGeometry::new(span, 0.0, look);
+            match style {
+                IslandStyle::Notch => draw_compact_player(
+                    gfx,
+                    &compact,
+                    geometry,
+                    geometry.width,
+                    compact_height,
+                    track,
+                    cover.as_ref(),
+                )?,
+                IslandStyle::Bubble => {
+                    if let Some(prepared) = &prepared_music {
+                        draw_bubble_player(
+                            gfx,
+                            &compact,
+                            geometry,
+                            compact_height,
+                            track,
+                            prepared,
+                            cover.as_ref(),
+                        )?;
                     }
                 }
-                Island::Usage => {
-                    let anchors = match style {
-                        IslandStyle::Notch => {
-                            draw_compact_usage(gfx, &content, geometry, compact_height, &providers)?
-                        }
-                        IslandStyle::Bubble => {
-                            draw_bubble_usage(gfx, &content, geometry, compact_height, &providers)?
-                        }
-                    };
-                    self.usage_anchors = anchors
-                        .into_iter()
-                        .map(|(provider, x)| (provider, look.screen.left + (span.left + x) as i32))
-                        .collect();
-                }
             }
-            let (left, right) = match kind {
-                Island::Music => (span.left, divider.unwrap_or(span.right)),
-                Island::Usage => (divider.unwrap_or(span.left), span.right),
-            };
             self.island_hits.push(IslandHit {
-                bounds: (left, bar_y, right, bar_y + bar_height),
-                action: IslandAction::Toggle(kind),
+                bounds: (span.left, bar_y, span.right, bar_y + bar_height),
+                action: IslandAction::Toggle(Island::Music),
             });
-            if look.panel != Some(kind) {
-                continue;
-            }
+        }
+
+        if let Some(span) = usage
+            && let Some(strip) = &prepared_usage
+        {
+            let anchors = draw_usage_strip(
+                gfx,
+                c,
+                layers,
+                strip,
+                span,
+                bar_y,
+                bar_height,
+                look.scale,
+                effective_light,
+            )?;
+            self.usage_anchors = anchors
+                .into_iter()
+                .map(|(provider, x)| (provider, look.screen.left + x as i32))
+                .collect();
+            self.island_hits.push(IslandHit {
+                bounds: (span.left, bar_y, span.right, bar_y + bar_height),
+                action: IslandAction::Toggle(Island::Usage),
+            });
+        }
+
+        if let Some(kind) = look.panel {
+            let anchor = match kind {
+                Island::Music => music,
+                Island::Usage => usage,
+            };
+            let Some(span) = anchor else {
+                return Ok(());
+            };
             let desired = px(match kind {
                 Island::Music => 360.0,
                 Island::Usage => ISLAND_EXPANDED_WIDTH,
             });
-            self.panel_span = bubble_panel_span(self.triggers_span, width, desired);
+            self.panel_span = if kind == Island::Usage && span.left < width * 0.5 {
+                left_bubble_panel_span(span, width, desired)
+            } else {
+                bubble_panel_span(span, width, desired)
+            };
             let volume_span = if kind == Island::Music && look.status.volume.is_some() {
                 let (music, volume) = volume_popover_layout(self.panel_span, width, look.scale);
                 self.panel_span = music;
@@ -1126,7 +1241,7 @@ impl MenuBar {
                 island_width - 2.0 * inset,
                 1.0,
             )?;
-            draw_usage_row(
+            if let Some((bx, by, bw, bh)) = draw_usage_row(
                 gfx,
                 &rows,
                 *provider,
@@ -1134,9 +1249,24 @@ impl MenuBar {
                 *accent,
                 scale,
                 look.light,
+                look.usage_interval_minutes,
                 island_width,
                 y,
-            )?;
+            )? {
+                let panel_top = body_top + by - px(self.usage_scroll);
+                let panel_bottom = panel_top + bh;
+                let visible_top = panel_top.max(body_top);
+                let visible_bottom = panel_bottom.min(body_top + body_height);
+                if visible_bottom > visible_top {
+                    self.island_hits.push(geometry.hit(
+                        bx,
+                        visible_top,
+                        bw,
+                        visible_bottom - visible_top,
+                        IslandAction::SignIn(*provider),
+                    ));
+                }
+            }
         }
         let bounds = (
             geometry.left,
@@ -1558,8 +1688,9 @@ pub(super) fn island_providers(look: &Look) -> Vec<IslandProvider<'_>> {
             let accent = match provider {
                 Provider::Claude => rgba(217, 119, 87, 255),
                 Provider::Codex => rgba(135, 190, 245, 255),
-                Provider::OpenCode => rgba(132, 196, 166, 255),
+                Provider::Antigravity => rgba(96, 165, 250, 255),
                 Provider::Gemini => rgba(111, 146, 255, 255),
+                Provider::OpenCode => rgba(132, 196, 166, 255),
                 Provider::Zai => rgba(79, 110, 247, 255),
             };
             (provider, look.usage.get(provider), accent)
@@ -1800,194 +1931,151 @@ pub(super) fn usage_moment(
         })
 }
 
-pub(super) fn draw_compact_usage(
-    gfx: &Gfx,
-    content: &VisualCollection,
-    geometry: IslandGeometry,
-    bar_height: f32,
-    providers: &[IslandProvider<'_>],
-) -> Result<Vec<(Provider, f32)>> {
-    let c = &gfx.compositor;
-    let px = |v| geometry.px(v);
-    let ink = geometry.ink();
-    let scale = geometry.scale;
-    let inset = px(13.0);
-    let half = (geometry.width - 2.0 * inset) / providers.len().max(1) as f32;
-    if half < px(20.0) {
-        let icon = gfx.glyph_brush(&[('\u{E9D9}', 1.0)], scale, ink)?;
-        add_visual(
-            c,
-            content,
-            &icon.brush.cast()?,
-            (geometry.width - icon.width) / 2.0,
-            (bar_height - icon.height) / 2.0,
-            icon.width,
-            icon.height,
-        )?;
-        let centre = geometry.width / 2.0;
-        return Ok(providers
-            .iter()
-            .map(|(provider, ..)| (*provider, centre))
-            .collect());
-    }
-    let mut anchors = Vec::with_capacity(providers.len());
-    for (index, (provider, usage, accent)) in providers.iter().enumerate() {
-        anchors.push((*provider, inset + (index as f32 + 0.5) * half));
-        // When space is tight the full list is still available in the panel.
-        if half < px(20.0) {
-            break;
-        }
-        let icon_size = px(18.0) as u32;
-        let start = inset
-            + index as f32 * half
-            + if half < px(84.0) {
-                (half - icon_size as f32) / 2.0
-            } else {
-                px(21.0)
-            };
-        if let Some(image) = usage::logo(*provider) {
-            let image_brush = gfx.icon_brush(image, icon_size)?;
-            let brush: CompositionBrush =
-                if !matches!(provider, Provider::Claude | Provider::Gemini) && geometry.light {
-                    let tinted = c.CreateMaskBrush()?;
-                    tinted.SetMask(&image_brush)?;
-                    tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
-                    tinted.cast()?
-                } else {
-                    image_brush.cast()?
-                };
-            add_visual(
-                c,
-                content,
-                &brush,
-                start,
-                (bar_height - icon_size as f32) / 2.0,
-                icon_size as f32,
-                icon_size as f32,
-            )?;
-        }
-        let percent = usage.compact_text();
-        if half > px(106.0) {
-            let font = if usage.main_window().is_some() {
-                14.0
-            } else {
-                12.0
-            };
-            let label = gfx.text_brush_sized(&percent, scale, font, true, ink)?;
-            let reserve = if usage.main_window().is_some() {
-                74.0
-            } else {
-                50.0
-            };
-            if label.width <= half - px(reserve) {
-                add_visual(
-                    c,
-                    content,
-                    &label.brush.cast()?,
-                    start + px(25.0),
-                    (bar_height - label.height) / 2.0,
-                    label.width,
-                    label.height,
-                )?;
-            }
-        }
-        if half >= px(84.0) {
-            let ring = gfx.usage_ring(
-                usage.main_window().map(|window| window.used_percent),
-                scale,
-                *accent,
-            )?;
-            add_visual(
-                c,
-                content,
-                &ring.brush.cast()?,
-                inset + (index + 1) as f32 * half - px(16.0) - ring.width,
-                (bar_height - ring.height) / 2.0,
-                ring.width,
-                ring.height,
-            )?;
-        }
-    }
-    Ok(anchors)
+struct UsageStripItem {
+    provider: Provider,
+    label: LabelBrush,
+    has_value: bool,
+    width: f32,
 }
 
-pub(super) fn draw_bubble_usage(
+struct UsageStrip {
+    icon_size: f32,
+    icon_gap: f32,
+    item_gap: f32,
+    items: Vec<UsageStripItem>,
+}
+
+impl UsageStrip {
+    fn fitting_width(&self, max_width: f32) -> f32 {
+        let mut used = 0.0;
+        for (index, item) in self.items.iter().enumerate() {
+            let next = if index == 0 {
+                item.width
+            } else {
+                used + self.item_gap + item.width
+            };
+            if next > max_width {
+                break;
+            }
+            used = next;
+        }
+        used
+    }
+}
+
+fn prepare_usage_strip(
     gfx: &Gfx,
-    content: &VisualCollection,
-    geometry: IslandGeometry,
-    pill_height: f32,
+    look: &Look,
+    effective_light: bool,
     providers: &[IslandProvider<'_>],
+) -> Result<UsageStrip> {
+    let px = |v: f32| (v * look.scale).round();
+    let ink = if effective_light {
+        Ink::Dark
+    } else {
+        Ink::Light
+    };
+    let icon_size = px(16.0).max(12.0);
+    let icon_gap = px(5.0);
+    let item_gap = px(14.0);
+    let mut items = Vec::with_capacity(providers.len());
+    for (provider, usage, _) in providers {
+        let text = usage.compact_text();
+        let label = gfx.text_brush_sized(&text, look.scale, 12.0, true, ink)?;
+        let width = icon_size + icon_gap + label.width;
+        items.push(UsageStripItem {
+            provider: *provider,
+            label,
+            has_value: usage.five_hour_window().is_some(),
+            width,
+        });
+    }
+    Ok(UsageStrip {
+        icon_size,
+        icon_gap,
+        item_gap,
+        items,
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Strip placement needs bar geometry, scale, and backdrop contrast"
+)]
+fn draw_usage_strip(
+    gfx: &Gfx,
+    c: &Compositor,
+    layers: &VisualCollection,
+    strip: &UsageStrip,
+    span: Span,
+    bar_y: f32,
+    bar_height: f32,
+    scale: f32,
+    effective_light: bool,
 ) -> Result<Vec<(Provider, f32)>> {
-    let c = &gfx.compositor;
-    let px = |v| geometry.px(v);
-    let ink = geometry.ink();
-    let scale = geometry.scale;
-    let inset = px(8.0);
-    let slot = (geometry.width - 2.0 * inset) / providers.len().max(1) as f32;
-    if slot < px(20.0) {
-        let icon = gfx.glyph_brush(&[('\u{E9D9}', 1.0)], scale, ink)?;
+    let px = |v: f32| (v * scale).round();
+    let mut x = span.left;
+    let mut anchors = Vec::with_capacity(strip.items.len());
+    let divider_color = if effective_light {
+        rgba(0, 0, 0, 32)
+    } else {
+        rgba(255, 255, 255, 36)
+    };
+    let divider_h = px(11.0).max(1.0);
+    for (index, item) in strip.items.iter().enumerate() {
+        let right = x + item.width;
+        if right > span.right + 0.5 {
+            break;
+        }
+        if index > 0 {
+            let div_x = x - strip.item_gap / 2.0;
+            add_visual(
+                c,
+                layers,
+                &c.CreateColorBrushWithColor(divider_color)?.cast()?,
+                div_x,
+                bar_y + (bar_height - divider_h) / 2.0,
+                px(1.0).max(1.0),
+                divider_h,
+            )?;
+        }
+        anchors.push((item.provider, x + item.width / 2.0));
+        if let Some(image) = usage::logo(item.provider) {
+            let icon_px = strip.icon_size as u32;
+            let image_brush = gfx.icon_brush(image, icon_px)?;
+            let brush: CompositionBrush = if !matches!(
+                item.provider,
+                Provider::Claude | Provider::Antigravity | Provider::Gemini
+            ) && effective_light
+            {
+                let tinted = c.CreateMaskBrush()?;
+                tinted.SetMask(&image_brush)?;
+                tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
+                tinted.cast()?
+            } else {
+                image_brush.cast()?
+            };
+            add_visual(
+                c,
+                layers,
+                &brush,
+                x,
+                bar_y + (bar_height - strip.icon_size) / 2.0,
+                strip.icon_size,
+                strip.icon_size,
+            )?;
+        }
         add_visual(
             c,
-            content,
-            &icon.brush.cast()?,
-            (geometry.width - icon.width) / 2.0,
-            (pill_height - icon.height) / 2.0,
-            icon.width,
-            icon.height,
-        )?;
-        let centre = geometry.width / 2.0;
-        return Ok(providers
-            .iter()
-            .map(|(provider, ..)| (*provider, centre))
-            .collect());
-    }
-    let icon_size = px(15.0) as u32;
-    let gap = px(4.0);
-    let mut anchors = Vec::with_capacity(providers.len());
-    for (index, (provider, usage, _accent)) in providers.iter().enumerate() {
-        let slot_left = inset + index as f32 * slot;
-        anchors.push((*provider, slot_left + slot / 2.0));
-        let percent = usage.compact_text();
-        let label = if slot >= px(44.0) {
-            let label = gfx.text_brush_sized(&percent, scale, 11.5, true, ink)?;
-            (label.width + icon_size as f32 + gap <= slot).then_some(label)
-        } else {
-            None
-        };
-        let group_width = icon_size as f32 + label.as_ref().map_or(0.0, |text| gap + text.width);
-        let start = slot_left + ((slot - group_width) / 2.0).max(0.0);
-        if let Some(image) = usage::logo(*provider) {
-            let image_brush = gfx.icon_brush(image, icon_size)?;
-            let brush: CompositionBrush =
-                if !matches!(provider, Provider::Claude | Provider::Gemini) && geometry.light {
-                    let tinted = c.CreateMaskBrush()?;
-                    tinted.SetMask(&image_brush)?;
-                    tinted.SetSource(&c.CreateColorBrushWithColor(rgba(27, 34, 45, 255))?)?;
-                    tinted.cast()?
-                } else {
-                    image_brush.cast()?
-                };
-            add_visual(
-                c,
-                content,
-                &brush,
-                start,
-                (pill_height - icon_size as f32) / 2.0,
-                icon_size as f32,
-                icon_size as f32,
-            )?;
-        }
-        if let Some(label) = label {
-            add_visual(
-                c,
-                content,
-                &label.brush.cast()?,
-                start + icon_size as f32 + gap,
-                (pill_height - label.height) / 2.0,
-                label.width,
-                label.height,
-            )?;
-        }
+            layers,
+            &item.label.brush.cast()?,
+            x + strip.icon_size + strip.icon_gap,
+            bar_y + (bar_height - item.label.height) / 2.0,
+            item.label.width,
+            item.label.height,
+        )?
+        .SetOpacity(if item.has_value { 0.95 } else { 0.55 })?;
+        x = right + strip.item_gap;
     }
     Ok(anchors)
 }

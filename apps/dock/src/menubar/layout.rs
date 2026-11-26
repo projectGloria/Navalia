@@ -1,6 +1,7 @@
 use super::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    HWND_TOPMOST, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos,
+    HWND_TOPMOST, IsWindowVisible, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SetWindowPos,
 };
 
 pub(super) fn volume_percent(span: VolumeTrack, y: f32) -> u8 {
@@ -224,6 +225,15 @@ pub(super) fn bubble_panel_span(anchor: Span, screen_width: f32, desired: f32) -
     }
 }
 
+pub(super) fn left_bubble_panel_span(anchor: Span, screen_width: f32, desired: f32) -> Span {
+    let width = desired.max(anchor.width()).min(screen_width);
+    let left = anchor.left.clamp(0.0, screen_width - width).round();
+    Span {
+        left,
+        right: left + width,
+    }
+}
+
 pub(super) type IslandProvider<'a> = (Provider, &'a ProviderUsage, Color);
 
 pub(super) fn cursor_anchor() -> (i32, i32) {
@@ -256,6 +266,32 @@ pub(super) fn tray_item_spans(
 impl MenuBar {
     pub(super) fn reveal_lift(&self) -> f32 {
         (self.bounds.bottom - self.bounds.top) as f32 * 0.3
+    }
+
+    /// Puts the bar back on top without moving or showing it. Explorer lifts
+    /// its auto-hidden taskbar above every topmost window when a shell flyout
+    /// opens, and even ghosted it then covers the bar's icons.
+    pub fn raise(&self) {
+        // SAFETY: Our own live window; IsWindowVisible only reads its state.
+        unsafe {
+            if !IsWindowVisible(self.hwnd).as_bool() {
+                return;
+            }
+            let z_after = if self.taskbar_backdrop.below_hwnd != 0 {
+                HWND(self.taskbar_backdrop.below_hwnd as *mut _)
+            } else {
+                HWND_TOPMOST
+            };
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(z_after),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
     }
 
     pub(super) fn place(&mut self) -> Result<()> {

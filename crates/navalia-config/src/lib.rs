@@ -106,6 +106,14 @@ pub struct Config {
     pub menu_bar_smart_hide: bool,
     /// Show supported AI providers' plan usage in the menu bar.
     pub ai_usage: bool,
+    /// Which wing of the bottom bar hosts the AI Tools widget.
+    pub ai_usage_position: AiUsagePosition,
+    /// How often (in minutes) the silent usage check runs.
+    pub ai_usage_interval_minutes: u32,
+    /// Show only enabled AI tools whose client process is currently running.
+    pub ai_usage_only_running: bool,
+    /// Enabled AI tools in display order.
+    pub ai_usage_providers: Vec<AiProvider>,
     /// Show what is playing (title, controls) in the menu bar. With this and
     /// `ai_usage` off there is no island at all (issue #28).
     pub menu_bar_music: bool,
@@ -338,6 +346,41 @@ pub enum TaskbarStyle {
     Clear,
 }
 
+/// Which wing of the bottom bar hosts the AI Tools widget.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiUsagePosition {
+    Left,
+    #[default]
+    #[serde(other)]
+    Right,
+}
+
+/// Supported AI tools whose 5-hour quota can be shown in the AI Tools widget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiProvider {
+    Claude,
+    Codex,
+    Antigravity,
+    Gemini,
+    OpenCode,
+    Zai,
+    /// Forward-compatible fallback for providers added in newer versions.
+    #[serde(other)]
+    Unknown,
+}
+
+pub const AI_USAGE_INTERVAL_RANGE: (u32, u32) = (1, 60);
+
+fn default_ai_usage_providers() -> Vec<AiProvider> {
+    vec![
+        AiProvider::Claude,
+        AiProvider::Codex,
+        AiProvider::Antigravity,
+    ]
+}
+
 /// Parses a `#RRGGBB` hex color string (case-insensitive) into RGB bytes.
 #[must_use]
 pub fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
@@ -395,6 +438,13 @@ impl Config {
             .map(|item| item.trim().to_owned())
             .filter(|item| !item.is_empty() && seen.insert(item.clone()))
             .collect();
+        self.ai_usage_interval_minutes = self
+            .ai_usage_interval_minutes
+            .clamp(AI_USAGE_INTERVAL_RANGE.0, AI_USAGE_INTERVAL_RANGE.1);
+        let mut seen_providers = std::collections::HashSet::new();
+        self.ai_usage_providers.retain(|provider| {
+            *provider != AiProvider::Unknown && seen_providers.insert(*provider)
+        });
         self
     }
 
@@ -440,6 +490,10 @@ impl Default for Config {
             menu_bar_auto_hide: false,
             menu_bar_smart_hide: false,
             ai_usage: true,
+            ai_usage_position: AiUsagePosition::Right,
+            ai_usage_interval_minutes: 5,
+            ai_usage_only_running: false,
+            ai_usage_providers: default_ai_usage_providers(),
             menu_bar_music: true,
             menu_bar_island_style: IslandStyle::Notch,
             menu_bar_notifications: false,
@@ -1402,6 +1456,60 @@ mod tests {
         )?;
         assert_eq!(saved.taskbar_style, TaskbarStyle::Frosted);
         assert_eq!(saved.taskbar_color.as_deref(), Some("#0f172a"));
+        Ok(())
+    }
+
+    #[test]
+    fn ai_usage_preferences_default_sanitize_and_round_trip() -> Result<(), serde_json::Error> {
+        let fresh = Config::default();
+        assert_eq!(fresh.ai_usage_position, AiUsagePosition::Right);
+        assert_eq!(fresh.ai_usage_interval_minutes, 5);
+        assert!(!fresh.ai_usage_only_running);
+        assert_eq!(
+            fresh.ai_usage_providers,
+            vec![
+                AiProvider::Claude,
+                AiProvider::Codex,
+                AiProvider::Antigravity
+            ]
+        );
+
+        let sanitized = Config {
+            ai_usage_interval_minutes: 0,
+            ai_usage_providers: vec![
+                AiProvider::Claude,
+                AiProvider::Unknown,
+                AiProvider::Claude,
+                AiProvider::Zai,
+            ],
+            ..Config::default()
+        }
+        .sanitized();
+        assert_eq!(sanitized.ai_usage_interval_minutes, 1);
+        assert_eq!(
+            sanitized.ai_usage_providers,
+            vec![AiProvider::Claude, AiProvider::Zai]
+        );
+
+        let parsed = serde_json::from_str::<Config>(
+            r#"{
+                "aiUsagePosition":"left",
+                "aiUsageIntervalMinutes":120,
+                "aiUsageOnlyRunning":true,
+                "aiUsageProviders":["antigravity","futureProvider","codex"]
+            }"#,
+        )?
+        .sanitized();
+        assert_eq!(parsed.ai_usage_position, AiUsagePosition::Left);
+        assert_eq!(parsed.ai_usage_interval_minutes, 60);
+        assert!(parsed.ai_usage_only_running);
+        assert_eq!(
+            parsed.ai_usage_providers,
+            vec![AiProvider::Antigravity, AiProvider::Codex]
+        );
+
+        let unknown_pos: Config = serde_json::from_str(r#"{"aiUsagePosition":"center"}"#)?;
+        assert_eq!(unknown_pos.ai_usage_position, AiUsagePosition::Right);
         Ok(())
     }
 }

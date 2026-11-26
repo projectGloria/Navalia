@@ -1,6 +1,7 @@
 pub mod accessories;
 pub mod appbar;
 pub mod autostart;
+mod chevron;
 pub mod dock_link;
 pub mod end_task;
 pub mod files;

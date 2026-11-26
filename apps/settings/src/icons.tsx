@@ -6,13 +6,14 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "system";
+export type SectionId = "appearance" | "dock" | "windows" | "menubar" | "ai" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
   appearance: ["#5c5c62", "#1c1c1e"],
   dock: ["#4aa3ff", "#0a6cf0"],
   windows: ["#b57bff", "#7d3ff0"],
   menubar: ["#ff9f45", "#f0640a"],
+  ai: ["#38bdf8", "#6366f1"],
   system: ["#a1a1a6", "#6e6e73"],
 };
 
@@ -48,6 +49,13 @@ const GLYPHS: Record<SectionId, ReactNode> = {
       <rect x="4" y="5" width="16" height="3.6" rx="1.6" fill="#fff" />
       <circle cx="16.8" cy="6.8" r="0.9" fill="#f0640a" />
     </>
+  ),
+  // A four-point sparkle for AI Tools.
+  ai: (
+    <path
+      fill="#fff"
+      d="M12 4.2 13.8 9.2 18.8 11 13.8 12.8 12 17.8 10.2 12.8 5.2 11 10.2 9.2Z"
+    />
   ),
   // A gear.
   system: (

@@ -16,7 +16,7 @@ use windows::{
         UI::{
             Shell::{ABM_GETSTATE, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
             WindowsAndMessaging::{
-                FindWindowExW, GWL_EXSTYLE, GetLayeredWindowAttributes, GetPropW,
+                FindWindowExW, GWL_EXSTYLE, GetClassNameW, GetLayeredWindowAttributes, GetPropW,
                 GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
                 WS_EX_LAYERED, WS_EX_TRANSPARENT,
             },
@@ -175,6 +175,19 @@ pub fn give_back() {
 #[must_use]
 pub fn is_hidden(hwnd: HWND) -> bool {
     is_taskbar(hwnd) && is_ghosted(hwnd)
+}
+
+/// Whether `hwnd` has a taskbar's window class, read from that one window
+/// only: cheap enough for events that arrive for every window on screen.
+#[must_use]
+pub fn has_taskbar_class(hwnd: HWND) -> bool {
+    let mut buffer = [0u16; 32];
+    // SAFETY: The buffer outlives the call, which returns the characters written.
+    let len = unsafe { GetClassNameW(hwnd, &mut buffer) }.max(0) as usize;
+    let class = &buffer[..len];
+    // SAFETY: Both are static, NUL-terminated wide strings.
+    let (primary, secondary) = unsafe { (PRIMARY.as_wide(), SECONDARY.as_wide()) };
+    class == primary || class == secondary
 }
 
 /// Whether `hwnd` is the taskbar of one of the monitors, hidden or not.

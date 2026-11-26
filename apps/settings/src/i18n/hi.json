@@ -211,5 +211,17 @@
     "camera": "कैमरा",
     "bluetooth": "ब्लूटूथ",
     "system_monitor": "सिस्टम मॉनिटर"
-  }
+  },
+  "aiTools": "AI टूल्स",
+  "aiToolsShow": "AI टूल्स विजेट दिखाएँ",
+  "aiToolsShowHint": "स्थानीय सत्रों से चुने हुए AI टूल्स का 5 घंटे का शेष कोटा दिखाता है। क्रेडेंशियल सहेजता नहीं है।",
+  "aiUsagePosition": "बार पर स्थान",
+  "aiUsagePositionLeft": "बाएँ",
+  "aiUsagePositionRight": "दाएँ",
+  "aiUsageInterval": "जाँच अंतराल",
+  "aiUsageIntervalHint": "हर कुछ मिनट में बैकग्राउंड में चुपचाप चलता है।",
+  "aiUsageOnlyRunning": "केवल चल रहे ऐप्स दिखाएँ",
+  "aiUsageOnlyRunningHint": "जिन टूल्स का क्लाइंट या CLI खुला नहीं है उन्हें छिपाएँ।",
+  "aiToolsList": "टूल्स",
+  "aiProviderZai": "Z.ai GLM"
 }

@@ -211,5 +211,17 @@
     "camera": "الكاميرا",
     "bluetooth": "بلوتوث",
     "system_monitor": "مراقب النظام"
-  }
+  },
+  "aiTools": "أدوات الذكاء الاصطناعي",
+  "aiToolsShow": "إظهار أداة أدوات الذكاء الاصطناعي",
+  "aiToolsShowHint": "يعرض الحصة المتبقية لمدة 5 ساعات للأدوات المحددة من الجلسات المحلية دون حفظ بيانات الدخول.",
+  "aiUsagePosition": "الموضع على الشريط",
+  "aiUsagePositionLeft": "يسار",
+  "aiUsagePositionRight": "يمين",
+  "aiUsageInterval": "فترة الفحص",
+  "aiUsageIntervalHint": "يعمل بصمت في الخلفية كل بضع دقائق.",
+  "aiUsageOnlyRunning": "إظهار التطبيقات قيد التشغيل فقط",
+  "aiUsageOnlyRunningHint": "إخفاء الأدوات التي ليس لها تطبيق أو واجهة سطر أوامر مفتوحة.",
+  "aiToolsList": "الأدوات",
+  "aiProviderZai": "Z.ai GLM"
 }

@@ -240,11 +240,7 @@ impl MenuBar {
         let Some(monitor) = system::primary_monitor() else {
             return Ok(());
         };
-        let active_providers = if self.usage.is_some() {
-            usage::active_providers()
-        } else {
-            ActiveProviders::default()
-        };
+        let active_providers = self.target_providers();
         let track = self.media.as_ref().and_then(media::Watch::snapshot);
         self.panel = available_panel(self.panel, track.is_some(), active_providers.any());
         if !active_providers.any() {
@@ -255,7 +251,7 @@ impl MenuBar {
             && (!self.auto_hide || self.revealed)
             && let Some(usage) = &mut self.usage
         {
-            usage.refresh(false);
+            usage.refresh(active_providers, false);
         }
         let appearance = appearance::menu_bar();
         let look = Look {
@@ -286,6 +282,9 @@ impl MenuBar {
                 .as_ref()
                 .map_or_else(Snapshot::default, UsageMonitor::snapshot),
             usage_enabled: self.usage.is_some() && active_providers.any(),
+            usage_position: self.usage_settings.position,
+            usage_interval_minutes: self.usage_settings.interval_minutes,
+            usage_only_running: self.usage_settings.only_running,
             active_providers,
             panel: self.panel,
             usage_refreshing: self.usage.as_ref().is_some_and(UsageMonitor::is_refreshing),
@@ -402,7 +401,9 @@ impl MenuBar {
     }
 
     pub(super) fn apply_look(&mut self, gfx: &Gfx, mut look: Look) -> Result<()> {
-        look.active_providers = look.usage.visible_providers(look.active_providers);
+        look.active_providers = look
+            .usage
+            .visible_providers(look.active_providers, look.usage_only_running);
         look.usage_enabled &= look.active_providers.any();
         self.panel = available_panel(look.panel, look.track.is_some(), look.usage_enabled);
         look.panel = self.panel;

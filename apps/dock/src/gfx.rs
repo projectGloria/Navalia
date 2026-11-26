@@ -10,12 +10,8 @@ use navalia_shell::icons::IconImage;
 use windows::{
     Foundation::Size,
     Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat},
-    UI::{
-        Color,
-        Composition::{
-            CompositionDrawingSurface, CompositionGraphicsDevice, CompositionSurfaceBrush,
-            Compositor,
-        },
+    UI::Composition::{
+        CompositionDrawingSurface, CompositionGraphicsDevice, CompositionSurfaceBrush, Compositor,
     },
     Win32::{
         Foundation::{HMODULE, POINT},
@@ -355,69 +351,6 @@ impl Gfx {
                 dc.FillGeometry(&shape, &white, None);
             }
             Ok(())
-        })
-    }
-
-    pub fn usage_ring(
-        &self,
-        used_percent: Option<u8>,
-        scale: f32,
-        accent: Color,
-    ) -> Result<LabelBrush> {
-        let side = (18.0 * scale).round();
-        let center = side / 2.0;
-        let radius = center - 2.0 * scale;
-        let stroke = (2.4 * scale).max(1.0);
-        let brush = self.draw(side as u32, side as u32, |dc| {
-            // SAFETY: Brushes remain alive for the drawing calls.
-            unsafe {
-                let track = dc.CreateSolidColorBrush(&rgb(0.53, 0.56, 0.6, 0.4), None)?;
-                dc.DrawEllipse(
-                    &D2D1_ELLIPSE {
-                        point: Vector2 {
-                            X: center,
-                            Y: center,
-                        },
-                        radiusX: radius,
-                        radiusY: radius,
-                    },
-                    &track,
-                    stroke,
-                    None,
-                );
-                if let Some(percent) = used_percent {
-                    let foreground = dc.CreateSolidColorBrush(
-                        &rgb(
-                            f32::from(accent.R) / 255.0,
-                            f32::from(accent.G) / 255.0,
-                            f32::from(accent.B) / 255.0,
-                            1.0,
-                        ),
-                        None,
-                    )?;
-                    let steps = usize::from(percent) * 36 / 100;
-                    for index in 0..steps {
-                        let start = -std::f32::consts::FRAC_PI_2
-                            + index as f32 * std::f32::consts::TAU / 36.0;
-                        let end = start + std::f32::consts::TAU / 36.0;
-                        let a = Vector2 {
-                            X: center + radius * start.cos(),
-                            Y: center + radius * start.sin(),
-                        };
-                        let b = Vector2 {
-                            X: center + radius * end.cos(),
-                            Y: center + radius * end.sin(),
-                        };
-                        dc.DrawLine(a, b, &foreground, stroke, None);
-                    }
-                }
-            }
-            Ok(())
-        })?;
-        Ok(LabelBrush {
-            brush,
-            width: side,
-            height: side,
         })
     }
 

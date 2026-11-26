@@ -14,7 +14,13 @@ use navalia_shell::{
     power, recycle_bin,
     system::{animations_enabled, primary_monitor},
 };
-use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::SetTimer};
+use windows::Win32::{
+    Foundation::RECT,
+    UI::WindowsAndMessaging::{
+        HWND_TOPMOST, IsWindowVisible, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer,
+        SetWindowPos,
+    },
+};
 
 use crate::scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme};
 
@@ -554,6 +560,35 @@ impl App {
             &stage.rest_zone
         };
         place(self.input, input_zone, visible)
+    }
+
+    /// Lifts the dock and menu bar back above Explorer's auto-hidden taskbar,
+    /// which Windows raises over every topmost window while a shell flyout
+    /// (quick settings, the clock, hidden icons) is open. Ghosted, it still
+    /// covers what is under it, so the icons seemed to vanish for a while.
+    pub(super) fn raise_above_taskbar(&mut self) -> Result<()> {
+        if !self.fullscreen && self.stage.is_some() {
+            for hwnd in [self.visual, self.input] {
+                // SAFETY: Our own live windows; only their z-order changes.
+                unsafe {
+                    if IsWindowVisible(hwnd).as_bool() {
+                        let _ = SetWindowPos(
+                            hwnd,
+                            Some(HWND_TOPMOST),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(bar) = &self.menubar {
+            bar.raise();
+        }
+        Ok(())
     }
 
     pub(super) fn schedule_trim(&self) {

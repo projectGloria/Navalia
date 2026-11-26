@@ -226,8 +226,13 @@ impl MenuBar {
             return self.paint_volume_preview(gfx);
         }
         let bar_y = (self.visual_height - (self.bounds.bottom - self.bounds.top)).max(0) as f32;
+        let active_trigger = match self.panel {
+            Some(Island::Music) => self.music_trigger_span,
+            Some(Island::Usage) => self.usage_trigger_span,
+            None => self.triggers_span,
+        };
         let span = if y >= bar_y {
-            self.triggers_span
+            active_trigger
         } else {
             self.panel_span
         };
@@ -284,6 +289,26 @@ impl MenuBar {
 
     /// Privacy activity or the user's taskbar preferences changed.
     pub fn click(&mut self, gfx: &Gfx, x: f32, y: f32) -> Result<()> {
+        // A click anywhere else on the bar is a click outside an open shell
+        // flyout; the items that open one toggle it themselves.
+        let on_island = self.island_hits.iter().any(|hit| hit.at(x, y));
+        let toggles_flyout = !on_island
+            && self.zones.iter().any(|(left, right, action)| {
+                x >= *left
+                    && x < *right
+                    && matches!(
+                        action,
+                        Action::QuickSettings
+                            | Action::Sound
+                            | Action::Notifications
+                            | Action::Clock
+                            | Action::Network
+                            | Action::HiddenIcons
+                    )
+            });
+        if !toggles_flyout {
+            launcher::dismiss_flyouts();
+        }
         if let Some(hit) = self.island_hits.iter().find(|hit| hit.at(x, y)) {
             match hit.action {
                 IslandAction::Toggle(island) => {
@@ -300,9 +325,15 @@ impl MenuBar {
                     }
                 }
                 IslandAction::Refresh => {
+                    let targets = self.target_providers();
                     if let Some(usage) = &mut self.usage {
-                        usage.refresh(true);
+                        usage.refresh(targets, true);
                     }
+                }
+                IslandAction::SignIn(provider) => {
+                    usage::launch_sign_in(provider);
+                    self.dismiss_island(gfx)?;
+                    return Ok(());
                 }
                 IslandAction::Media(control) => {
                     if let Some(media) = &self.media
