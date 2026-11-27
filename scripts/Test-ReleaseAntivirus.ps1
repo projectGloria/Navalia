@@ -111,7 +111,9 @@ try {
     Assert-Rejected 'missing release file cannot pass' { Assert-ReleaseAntivirus -Path (Join-Path $root 'missing.exe') -ReportDirectory $reportDir }
     $workflow = Get-Content (Join-Path $PSScriptRoot '../.github/workflows/release.yml') -Raw
     $scan = $workflow.IndexOf('- name: Analyze the final release files with Microsoft Defender')
-    $upload = $workflow.IndexOf('uses: actions/upload-artifact@')
+    # The unsigned-binaries upload feeds signing and must precede the scan; only the staged `app` upload must follow it.
+    $appUpload = [regex]::Match($workflow, 'uses: actions/upload-artifact@[^\r\n]*\r?\n\s+with:\s*\r?\n\s+name: app\s*\r?\n')
+    $upload = if ($appUpload.Success) { $appUpload.Index } else { -1 }
     if ($scan -lt 0 -or $upload -lt 0 -or $scan -ge $upload) { throw 'Defender scan must precede uploading the staged app artifact.' }
     Write-Host 'PASS: rejected files cannot reach the staged release artifact'
 } finally {
