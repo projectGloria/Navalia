@@ -48,7 +48,7 @@ fn main() {
     resources.set_icon("../../assets/brand/navalia.ico");
     // Code signing checks that every signed file names the same product.
     resources.set("ProductName", "Navalia");
-    resources.set("FileDescription", "Navalia dock");
+    resources.set("FileDescription", "Navalia");
     // Ensure Microsoft.Windows.Common-Controls 6.0.0.0 is declared so shell
     // extensions (like utshellext.dll) find modern exports like LoadIconWithScaleDown
     // (ordinal 381) instead of failing on comctl32 v5 (issue #23).
