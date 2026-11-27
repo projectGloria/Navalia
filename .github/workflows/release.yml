@@ -102,7 +102,7 @@ jobs:
           SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_PRODUCTION_CERTIFICATE_THUMBPRINT }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
-          $lane = ./scripts/Get-ReleaseSigningMode.ps1 -DryRun ($env:DRY_RUN -eq 'true') `
+          $lane = ./scripts/Get-ReleaseSigningMode.ps1 -DryRun:($env:DRY_RUN -eq 'true') `
             -Version $env:VERSION `
             -Organization $env:SIGNPATH_ORGANIZATION_ID -Project $env:SIGNPATH_PROJECT_SLUG `
             -Policy $env:SIGNPATH_SIGNING_POLICY_SLUG `
