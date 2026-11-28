@@ -214,7 +214,7 @@ pub fn menu_bar_bluetooth_changed() {
 }
 
 /// A right click on the bar: `true` if it was on an icon, whose menu opens.
-pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
+pub fn menu_bar_right_clicked(x: f32, y: f32, shift: bool) -> bool {
     let mut handled = false;
     with_app_now("menu bar icon menu", |app| {
         let Some(bar) = &mut app.menubar else {
@@ -227,6 +227,7 @@ pub fn menu_bar_right_clicked(x: f32, y: f32) -> bool {
         Ok(Some(Outside::MenuBarItemMenu {
             gfx: app.gfx.clone(),
             menu,
+            manage_icon: shift,
             dark: !crate::appearance::menu_bar_light(),
         }))
     });

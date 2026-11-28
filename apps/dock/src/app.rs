@@ -411,6 +411,7 @@ pub(crate) enum Outside {
     MenuBarItemMenu {
         gfx: Gfx,
         menu: crate::menubar::ItemMenu,
+        manage_icon: bool,
         dark: bool,
     },
     QuitDock,

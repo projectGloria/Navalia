@@ -58,14 +58,16 @@ use windows::{
             TrackMouseEvent,
         },
         UI::WindowsAndMessaging::{
-            CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, HHOOK,
-            IDC_ARROW, KillTimer, LoadCursorW, MSLLHOOKSTRUCT, PBT_POWERSETTINGCHANGE,
-            PostMessageW, RegisterClassW, SetCursor, SetTimer, SetWindowsHookExW,
-            UnhookWindowsHookEx, WH_MOUSE_LL, WM_APP, WM_CAPTURECHANGED, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST,
-            WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER,
-            WM_XBUTTONDOWN, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
+            GetCursorPos, GetWindowLongPtrW, HHOOK, HWND_TOP, HWND_TOPMOST, IDC_ARROW, KillTimer,
+            LoadCursorW, MA_NOACTIVATE, MSLLHOOKSTRUCT, PBT_POWERSETTINGCHANGE, PostMessageW,
+            RegisterClassW, SWP_NOZORDER, SetCursor, SetTimer, SetWindowLongPtrW,
+            SetWindowsHookExW, UnhookWindowsHookEx, WH_MOUSE_LL, WINDOWPOS, WM_APP,
+            WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEACTIVATE,
+            WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
+            WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER, WM_WINDOWPOSCHANGING, WM_XBUTTONDOWN,
+            WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST, WS_POPUP,
         },
     },
     core::{BOOL, Interface, h, w},
@@ -255,12 +257,11 @@ impl Action {
 pub struct ItemMenu {
     /// The entry `Config::menu_bar_hidden_items` gets if the user hides it.
     pub key: String,
-    /// The other app's tray icon, whose own menu the menu also offers.
+    /// The tray icon that receives ordinary right-clicks.
     pub tray: Option<TrayIcon>,
     /// Where the menu opens, in screen pixels.
     pub anchor: POINT,
-    /// Where the pointer was: the app's own menu opens there, as it did
-    /// when a right click went straight to the app.
+    /// Screen coordinates for the tray callback.
     pub pointer: (i32, i32),
 }
 
@@ -759,6 +760,25 @@ pub struct MenuBar {
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
+        // Let the popup take focus. Activating the full-width backdrop on
+        // mouse-down can raise it over the dock before button-up opens the menu.
+        WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
+        WM_WINDOWPOSCHANGING => {
+            // Windows can also raise the bar while restoring foreground focus.
+            // Preserve the same stacking order as MenuBar::place and raise.
+            // SAFETY: Windows supplies a writable WINDOWPOS for this message.
+            let pos = unsafe { &mut *(l.0 as *mut WINDOWPOS) };
+            if !pos.flags.contains(SWP_NOZORDER)
+                && (pos.hwndInsertAfter == HWND_TOP || pos.hwndInsertAfter == HWND_TOPMOST)
+            {
+                // SAFETY: This window stores its dock visual handle in user data.
+                let dock = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+                if dock != 0 {
+                    pos.hwndInsertAfter = HWND(dock as *mut _);
+                }
+            }
+            return unsafe { DefWindowProcW(hwnd, msg, w, l) };
+        }
         WM_LBUTTONDOWN => {
             launcher::note_menu_bar_press();
             app::menu_bar_volume_press((l.0 & 0xFFFF) as i16 as f32, (l.0 >> 16) as i16 as f32);
@@ -773,7 +793,8 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         WM_RBUTTONUP => {
             let x = (l.0 & 0xFFFF) as i16;
             let y = (l.0 >> 16) as i16;
-            if !app::menu_bar_right_clicked(f32::from(x), f32::from(y)) {
+            let shift = w.0 & windows::Win32::System::SystemServices::MK_SHIFT.0 as usize != 0;
+            if !app::menu_bar_right_clicked(f32::from(x), f32::from(y), shift) {
                 return unsafe { DefWindowProcW(hwnd, msg, w, l) };
             }
         }
@@ -1104,6 +1125,8 @@ impl MenuBar {
         if self.taskbar_backdrop == backdrop {
             return Ok(());
         }
+        // SAFETY: This is our live bar window and the value is a handle, never dereferenced.
+        unsafe { SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, backdrop.below_hwnd) };
         self.taskbar_backdrop = backdrop;
         self.refresh(gfx)
     }

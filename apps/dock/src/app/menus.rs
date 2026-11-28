@@ -166,7 +166,24 @@ pub(super) fn run_outside(outside: Outside) {
             }
             menu_bar_refresh();
         }
-        Outside::MenuBarItemMenu { gfx, menu, dark } => {
+        Outside::MenuBarItemMenu {
+            gfx,
+            menu,
+            manage_icon,
+            dark,
+        } => {
+            let open_app_menu = || {
+                menu.tray.as_ref().is_some_and(|icon| {
+                    navalia_shell::tray::click(
+                        icon,
+                        navalia_shell::tray::TrayClick::Right,
+                        menu.pointer,
+                    )
+                })
+            };
+            if !manage_icon && open_app_menu() {
+                return;
+            }
             const APP_MENU: u32 = 1;
             const HIDE: u32 = 2;
             const SETTINGS: u32 = 3;
@@ -198,13 +215,7 @@ pub(super) fn run_outside(outside: Outside) {
             with_app("close menu bar icon menu", App::after_menu);
             match chosen {
                 Some(APP_MENU) => {
-                    if let Some(icon) = &menu.tray {
-                        navalia_shell::tray::click(
-                            icon,
-                            navalia_shell::tray::TrayClick::Right,
-                            menu.pointer,
-                        );
-                    }
+                    open_app_menu();
                 }
                 Some(HIDE) => match shelf_item {
                     Some(item) => {

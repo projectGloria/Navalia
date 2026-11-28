@@ -1,5 +1,65 @@
 use super::*;
 
+#[test]
+fn menu_bar_right_click_preserves_dock_stacking() -> Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GW_HWNDPREV, GetWindow, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetWindowPos,
+    };
+
+    // Exercise the real window procedure with two hidden windows, without
+    // activating a popup or changing the user's foreground window.
+    unsafe {
+        let instance = GetModuleHandleW(None)?;
+        let class = w!("NavaliaBarStackingTest");
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(bar_proc),
+            hInstance: instance.into(),
+            lpszClassName: class,
+            ..Default::default()
+        });
+        let create = || {
+            CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                class,
+                None,
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+        };
+        let dock = create()?;
+        let bar = create()?;
+        SetWindowLongPtrW(bar, GWLP_USERDATA, dock.0 as isize);
+        let activation = SendMessageW(
+            bar,
+            WM_MOUSEACTIVATE,
+            Some(WPARAM(bar.0 as usize)),
+            Some(LPARAM(((WM_RBUTTONDOWN << 16) | 1) as isize)),
+        );
+        SetWindowPos(
+            bar,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+        )?;
+        let above = GetWindow(bar, GW_HWNDPREV)?;
+        DestroyWindow(bar)?;
+        DestroyWindow(dock)?;
+        assert_eq!(activation, LRESULT(MA_NOACTIVATE as isize));
+        assert_eq!(above, dock);
+    }
+    Ok(())
+}
+
 mod island_tests {
     use super::*;
 
